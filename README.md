@@ -50,26 +50,23 @@ MAA-PRTS\
 
 从上面的「下载」拿 `MAA-PRTS-v2.2.1-win64.zip`，解压后双击 `MAA-PRTS.exe` 即可，不用装 Python。
 
-### 方式二：自己打包
+### 方式二：自己打包（需要 Python 3.10+）
 
-```bat
-pip install pywebview pythonnet pyinstaller
-python build.py
-```
+双击 `打包.bat` 即可：首次运行会自动创建项目专用环境 `.venv` 并安装依赖，然后调用 PyInstaller 打包。
 
 产物在 `dist\MAA-PRTS\`，整个文件夹拷走就能用。
 
 ### 方式三：跑源码（需要 Python 3.10+）
 
-```bat
-pip install pywebview pythonnet
-python backend\main.py
-```
+双击 `启动.bat`：优先启动编译版，没有编译版时自动以源码模式运行，首次会创建 `.venv` 并安装依赖。
 
-调试模式（带 devtools）：
+调试模式（带 devtools）：双击 `调试启动.bat`。
+
+自动初始化失败时，也可以手动准备环境：
 
 ```bat
-python backend\main.py --debug
+py -3 -m venv .venv
+.venv\Scripts\pip install pywebview pythonnet pyinstaller pillow
 ```
 
 ---
@@ -100,6 +97,7 @@ MAA-PRTS-1/
 ├── config/              ★ 用户数据：settings.json、app.log
 ├── dist/                编译产物（PyInstaller 输出）
 ├── build.py             打包脚本
+├── tools/setup/         启动/打包脚本共享的 Python 环境引导
 ├── 启动.bat / 调试启动.bat / 打包.bat
 └── README.md
 ```
