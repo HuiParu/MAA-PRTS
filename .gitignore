@@ -18,7 +18,9 @@ config/app.log.1
 
 # 打包产物
 build/
-dist/MAA-PRTS/
+build_*/
+dist/
+dist_*/
 *.spec
 
 # Python

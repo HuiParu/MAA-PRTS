@@ -8,7 +8,7 @@
 
 ## 下载
 
-**[⬇ MAA-PRTS v2.2.0 · Windows x64（12.5 MB）](https://github.com/HuiParu/MAA-PRTS/releases/latest)**
+**[⬇ MAA-PRTS v2.2.1 · Windows x64（12.5 MB）](https://github.com/HuiParu/MAA-PRTS/releases/latest)**
 
 解压到任意可写目录（不要放 `C:\Program Files`），双击 `MAA-PRTS.exe` 即可。
 `_internal` 文件夹必须和 exe 放在一起，别只把 exe 拖出来。
@@ -47,7 +47,7 @@ MAA-PRTS\
 
 ### 方式一：用 Release 里的压缩包（普通用户）
 
-从上面的「下载」拿 `MAA-PRTS-v2.2.0-win64.zip`，解压后双击 `MAA-PRTS.exe` 即可，不用装 Python。
+从上面的「下载」拿 `MAA-PRTS-v2.2.1-win64.zip`，解压后双击 `MAA-PRTS.exe` 即可，不用装 Python。
 
 ### 方式二：自己打包
 
