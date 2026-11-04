@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MAA-PRTS · 作业控制台</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- ================= 侧栏 ================= -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5z"/><path d="M8.5 13.5 12 16l3.5-2.5"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <b>MAA-PRTS</b>
+        <span>作业控制台</span>
+      </div>
+    </div>
+
+    <div class="side-head">
+      <span>账号</span>
+      <button class="icon-btn small" id="btn-refresh-all" title="同步全部账号（tokens.txt）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+          <path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 4v5h-5"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="account-list" id="account-list"></div>
+
+    <button class="add-account" id="btn-add-account">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <path d="M12 5v14M5 12h14"/>
+      </svg>
+      添加账号
+    </button>
+
+    <div class="side-foot">
+      <div class="maa-state" id="maa-state">
+        <span class="dot"></span>
+        <span class="txt">MAA 状态检测中</span>
+      </div>
+      <button class="icon-btn" id="btn-settings" title="设置">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+          <circle cx="12" cy="12" r="3.2"/>
+          <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.55-1.1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
+        </svg>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ================= 主区 ================= -->
+  <main class="main">
+    <div class="update-bar" id="update-bar" hidden></div>
+
+    <header class="hero" id="hero">
+      <div class="hero-left">
+        <div class="hero-avatar" id="hero-avatar">?</div>
+        <div>
+          <div class="hero-name" id="hero-name">未选择账号</div>
+          <div class="hero-sub" id="hero-sub">用森空岛 token 添加一个账号开始</div>
+        </div>
+      </div>
+      <div class="hero-stats" id="hero-stats"></div>
+    </header>
+
+    <section class="search-wrap">
+      <div class="search-box">
+        <svg class="search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
+        </svg>
+        <input id="search-input" type="text" autocomplete="off" spellcheck="false"
+               placeholder="输入关卡代号 TL-10，或活动代号 act55side / 活动名 残照终尽">
+        <button class="search-btn" id="btn-search">搜索作业</button>
+      </div>
+      <div class="quick-row" id="quick-row"></div>
+    </section>
+
+    <section class="results" id="results">
+      <div class="empty-state" id="empty-state">
+        <div class="empty-art">
+          <svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="1.2">
+            <rect x="18" y="28" width="84" height="64" rx="12" opacity=".35"/>
+            <path d="M34 52h30M34 66h52M34 80h20" opacity=".55" stroke-linecap="round"/>
+            <circle cx="88" cy="46" r="12" opacity=".5"/>
+            <path d="m84 46 3 3 6-7" stroke-linecap="round" opacity=".8"/>
+          </svg>
+        </div>
+        <h3>搜一个关卡开始</h3>
+        <p>选中的账号会自动和作业站的干员要求比对，直接告诉你哪些能抄、哪些要借人。</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- ================= 作业集 ================= -->
+  <aside class="basket" id="basket">
+    <div class="basket-head">
+      <div>
+        <b>作业集</b>
+        <span id="basket-count">0</span>
+      </div>
+      <button class="icon-btn small" id="btn-clear-basket" title="清空">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+          <path d="M4 7h16M9 7V5h6v2M7 7l1 12h8l1-12"/>
+        </svg>
+      </button>
+    </div>
+    <div class="basket-list" id="basket-list"></div>
+    <div class="basket-empty" id="basket-empty">
+      在搜索结果里点「加入」<br>拖动作业可以调整写入 MAA 的顺序
+    </div>
+    <div class="basket-foot">
+      <label class="field-row">
+        <span>写入配置</span>
+        <select id="basket-profile"></select>
+      </label>
+      <label class="field-row">
+        <span>写入方式</span>
+        <select id="basket-mode">
+          <option value="replace">替换现有列表</option>
+          <option value="append">追加到现有列表</option>
+        </select>
+      </label>
+      <label class="check-row">
+        <input type="checkbox" id="basket-autostart" checked>
+        <span>写完自动启动 MAA</span>
+      </label>
+      <button class="primary-btn" id="btn-apply" disabled>写入 MAA 并重启</button>
+      <p class="hint">拖动可调整顺序，顺序就是 MAA 里的执行顺序<br>会先关闭 MAA → 备份配置 → 写入作业 → 重新启动</p>
+    </div>
+  </aside>
+</div>
+
+<div id="modal-root"></div>
+<div id="toast-root" class="toast-root"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

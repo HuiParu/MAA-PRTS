@@ -1,0 +1,38 @@
+# ============================================================
+# MAA-PRTS · 只提交代码与资源包
+# 用户数据（token、账号练度、配置、日志）一律不入库
+# ============================================================
+
+# 账号数据
+skland/tokens.txt
+skland/accounts/*.json
+skland/accounts/作业站/
+skland/subprof_cache.json
+skland/accounts/_removed/
+
+# 本机配置与日志
+config/settings.json
+config/gamedata.json
+config/app.log
+config/app.log.1
+
+# 打包产物
+build/
+dist/MAA-PRTS/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 临时截图
+shot-*.png
