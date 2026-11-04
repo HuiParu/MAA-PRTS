@@ -36,3 +36,6 @@ desktop.ini
 
 # 临时截图
 shot-*.png
+
+# 发布打包临时目录
+release/
