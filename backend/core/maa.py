@@ -16,6 +16,11 @@ from . import copilot, settings, tasks
 CREATE_NO_WINDOW = 0x08000000
 SAFE = re.compile(r'[\\/:*?"<>|]')
 
+# 每次写入作业都会备份一份 gui.new.json，只保留最近几份，避免占满用户磁盘
+KEEP_BACKUPS = 2
+BACKUP_PREFIX = '.bak-app-'
+BACKUP_STAMP = re.compile(r'^\d{8}-\d{6}$')
+
 
 def _dir():
     return settings.load()['maaDir']
@@ -31,6 +36,37 @@ def _config_path():
 
 def _copilot_dir():
     return os.path.join(_dir(), 'config', 'copilot')
+
+
+def _prune_backups(keep=KEEP_BACKUPS):
+    """清理本程序生成的 .bak-app-<时间戳>，只留最近 keep 份
+
+    只认「gui.new.json.bak-app-YYYYMMDD-HHMMSS」这种自己写出来的名字，
+    用户或 MAA 自己的 .bak / .bak-auto / .bak-before-xxx 一律不碰。
+    返回被删掉的文件名列表。
+    """
+    cfg = _config_path()
+    folder = os.path.dirname(cfg)
+    prefix = os.path.basename(cfg) + BACKUP_PREFIX
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return []
+
+    cand = [n for n in names
+            if n.startswith(prefix) and BACKUP_STAMP.match(n[len(prefix):])]
+    if len(cand) <= keep:
+        return []
+
+    cand.sort(reverse=True)          # 时间戳定长，字典序即时间序
+    removed = []
+    for name in cand[keep:]:
+        try:
+            os.remove(os.path.join(folder, name))
+            removed.append(name)
+        except OSError:
+            pass
+    return removed
 
 
 def _load_cfg():
@@ -121,9 +157,12 @@ def apply_plan(items, profile=None, mode='replace', auto_start=True, tid=None):
         log('MAA 未运行')
 
     time.sleep(0.4)
-    bak = _config_path() + '.bak-app-%s' % time.strftime('%Y%m%d-%H%M%S')
+    bak = _config_path() + BACKUP_PREFIX + time.strftime('%Y%m%d-%H%M%S')
     shutil.copyfile(_config_path(), bak)
     log('配置已备份 → %s' % os.path.basename(bak))
+    dropped = _prune_backups()
+    if dropped:
+        log('清理旧备份 %d 个（只保留最近 %d 份）' % (len(dropped), KEEP_BACKUPS))
 
     cfg = _load_cfg()
     configs = cfg.get('Configurations') or {}

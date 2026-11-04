@@ -120,13 +120,16 @@ main()
 
 ```
 taskkill MAA.exe
-  → 备份 config/gui.new.json.bak-app-<时间戳>
+  → 备份 config/gui.new.json.bak-app-<时间戳>（只留最近 2 份，多余的自动清掉）
   → 下载作业 JSON 到 config/copilot/<关卡>_<id>.json
   → 写 Configurations.<配置名>.Copilot.TaskList
       Name = 关卡代号（悖论模拟模式用干员名，此处是关卡）
       CopilotId / FilePath / IsChecked / Index
   → 启动 MAA.exe（可在界面关掉）
 ```
+
+`_prune_backups()` 只清理本程序生成的 `.bak-app-<YYYYMMDD-HHMMSS>`，
+MAA 自己和用户手写的 `.bak` / `.bak-auto` / `.bak-before-xxx` 一律不碰。
 
 MAA 运行时会周期性回写配置文件，所以必须先关进程再改，否则改动会被覆盖。
 
