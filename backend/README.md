@@ -21,7 +21,7 @@
 | `core/updater.py` | token → 账号配置的完整构建（练度、缺卡、统计、增量对比） |
 | `core/skland.py` | 森空岛鉴权链：token → grant → cred → 签名请求 → 绑定/角色数据 |
 | `core/copilot.py` | 作业站接口 + 干员要求匹配算法 |
-| `core/resources.py` | 读 `resources/arknights.json`：关卡索引、干员表、技能/模组名、活动代号前缀 |
+| `core/resources.py` | 读 `resources/arknights.json`：关卡索引、干员表、技能/模组名、活动正式名与代号前缀 |
 | `core/version.py` | 版本管理：程序版本、内置资源包版本、资源更新检测与提示 |
 | `core/maa.py` | MAA 进程控制、`gui.new.json` 读写、作业文件下载 |
 | `core/tasks.py` | 内存任务表：状态、日志、结果，供前端轮询 |

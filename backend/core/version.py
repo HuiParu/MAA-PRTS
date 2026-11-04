@@ -104,9 +104,18 @@ def check(activities=None) -> dict:
     """比对资源包版本，返回给前端的版本信息
 
     activities 传 resources.activity_list() 的结果，用来算出「哪些活动是新的」。
+    内部会取一份全量活动列表做比对：调用方通常只传快捷栏那一小截（18 条），
+    直接拿去比会把排序变化后的老活动误判成新活动。
     """
     meta = pack_meta()
-    acts = [a for a in (activities or []) if a.get('id')]
+    acts = []
+    try:
+        from . import resources
+        acts = [a for a in resources.activity_list(400) if a.get('id')]
+    except Exception:
+        acts = []
+    if not acts:
+        acts = [a for a in (activities or []) if a.get('id')]
     st = _state()
 
     # 首次运行：只记录，不提示
@@ -136,12 +145,17 @@ def check(activities=None) -> dict:
     if changed:
         old_counts = st.get('counts') or {}
         known = set(st.get('acts') or [])
+        # 只有「最近一个半月开的活动」才标 NEW：老活动没在旧记录里出现，
+        # 往往只是上次只存了快捷栏那一小截，不是真的新增
+        recent = time.time() - 45 * 86400
         new_acts = [{
             'id': a['id'],
             'name': a.get('name') or a['id'],
             'prefix': a.get('prefix') or '',
             'count': a.get('count') or 0,
-        } for a in acts if a['id'] not in known]
+        } for a in acts
+            if a['id'] not in known
+            and (not a.get('start') or a['start'] >= recent)]
         delta = {}
         for k, v in (meta['counts'] or {}).items():
             d = int(v or 0) - int(old_counts.get(k) or 0)

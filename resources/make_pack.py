@@ -40,6 +40,7 @@ def build(excel_dir, subprof_path=None):
     equips_src = (load(os.path.join(excel_dir, 'uniequip_table.json')) or {}).get('equipDict') or {}
     stages_src = (load(os.path.join(excel_dir, 'stage_table.json')) or {}).get('stages') or {}
     zones_src = (load(os.path.join(excel_dir, 'zone_table.json')) or {}).get('zones') or {}
+    acts_src = (load(os.path.join(excel_dir, 'activity_table.json')) or {}).get('basicInfo') or {}
 
     if not chars_src:
         raise SystemExit('character_table.json 读不到，检查 --excel 路径：%s' % excel_dir)
@@ -90,6 +91,23 @@ def build(excel_dir, subprof_path=None):
             'type': z.get('type') or '',
         }
 
+    # 活动正式名（activity_table.basicInfo.name）
+    # zone_table 里存的是地图分区名：act54side 的 zone 叫「通学路」，
+    # 但活动本身叫「月行水上」；act55side 的 zone 叫「残照终尽」，活动叫「时间啊，向前！」。
+    # 界面上一律用这个当活动名，zone 名只留作回退。
+    activities = {}
+    for aid, a in acts_src.items():
+        if not str(aid).startswith('act'):
+            continue
+        name = (a.get('name') or '').strip()
+        if not name:
+            continue
+        activities[aid] = {
+            'name': name,
+            'start': int(a.get('startTime') or 0),
+            'end': int(a.get('endTime') or 0),
+        }
+
     # 分支中文名没有官方静态表，只能从森空岛接口学；把已学到的带进包里当种子
     subprof = {}
     if subprof_path and os.path.isfile(subprof_path):
@@ -101,6 +119,7 @@ def build(excel_dir, subprof_path=None):
         'equips': len(equips),
         'stages': len(stages),
         'zones': len(zones),
+        'activities': len(activities),
         'subProfessions': len(subprof),
     }
     now = dt.datetime.now().astimezone()
@@ -123,6 +142,7 @@ def build(excel_dir, subprof_path=None):
         'equips': equips,
         'stages': stages,
         'zones': zones,
+        'activities': activities,
         'subProfessions': subprof,
     }
 

@@ -336,12 +336,9 @@ function renderUpdate() {
 function renderQuick() {
   const row = $('#quick-row');
   const news = newActIds();
-  const acts = (S.activities || []).slice().sort((a, b) => {
-    const na = news.indexOf(a.id) >= 0 ? 1 : 0;
-    const nb = news.indexOf(b.id) >= 0 ? 1 : 0;
-    if (na !== nb) return nb - na;            // 新活动永远排最前
-    return (b.num || 0) - (a.num || 0);       // 其余按新→旧
-  });
+  // 顺序由后端给：进行中的活动在最前，其次按开始时间倒序。
+  // 这里不再按编号重排，否则一堆 NEW 会把当前活动挤到滚动区外面去。
+  const acts = (S.activities || []);
 
   let html = '<span class="quick-label">快捷</span>';
   acts.slice(0, 12).forEach(a => {
@@ -473,6 +470,7 @@ function renderResult(d) {
     const head = `
       <div class="result-head">
         <div class="result-title">${esc(s.stage.code)} ${esc(s.stage.name)}
+          ${s.stage.activity ? `<em class="result-act">${esc(s.stage.activity)}</em>` : ''}
           <span>${s.total} 份作业 · 可直接抄 ${s.counts.ready} · 差一人 ${s.counts.borrow} · 需练度 ${s.counts.train}</span>
         </div>
         <div class="result-actions">
@@ -637,6 +635,8 @@ function addToBasket(op) {
     maaCode: op.maaCode,
   });
   renderBasket();
+  const fab = $('#basket-fab');
+  if (fab) { fab.classList.remove('pulse'); void fab.offsetWidth; fab.classList.add('pulse'); }
   toast('已加入作业集');
 }
 
@@ -645,6 +645,11 @@ function renderBasket() {
   $('#basket-count').textContent = S.basket.length;
   $('#btn-apply').disabled = S.basket.length === 0;
   $('#basket-empty').style.display = S.basket.length ? 'none' : 'flex';
+  const fab = $('#fab-count');
+  if (fab) {
+    fab.textContent = S.basket.length;
+    fab.hidden = S.basket.length === 0;
+  }
   list.innerHTML = S.basket.map((o, i) => `
     <div class="basket-item" draggable="true" data-id="${esc(o.id)}">
       <span class="drag-dots" title="拖动调整顺序">⠿</span>
@@ -734,6 +739,7 @@ async function applyToMaa() {
     await pollTask(taskId, m.el);
     S.basket = [];
     renderBasket();
+    toggleBasket(false);          // 窄屏写完顺手收起抽屉
     refreshMaaStatus();
     if (S.result) doSearch();
   } catch (e) {
@@ -1148,12 +1154,30 @@ function bindGlobal() {
     } catch (e) { toast('同步失败：' + e.message, 'err', 5000); }
   });
   document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { toggleBasket(false); return; }
     if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
       e.preventDefault();
       $('#search-input').focus();
     }
   });
+  // 窄屏抽屉：浮动按钮开关，点遮罩关闭，窗口拖宽后自动收起
+  $('#basket-fab').addEventListener('click', () => toggleBasket());
+  $('#basket-mask').addEventListener('click', () => toggleBasket(false));
+  window.addEventListener('resize', () => {
+    if (window.innerWidth > 1180) toggleBasket(false);
+  });
   setInterval(refreshMaaStatus, 30000);
+}
+
+/* 窄屏抽屉开关：不传参数就切换 */
+function toggleBasket(open) {
+  const box = $('#basket');
+  const mask = $('#basket-mask');
+  if (!box) return;
+  const on = open === undefined ? !box.classList.contains('show') : !!open;
+  box.classList.toggle('show', on);
+  if (mask) mask.classList.toggle('show', on);
+  document.body.classList.toggle('drawer-open', on);
 }
 
 document.addEventListener('DOMContentLoaded', () => {

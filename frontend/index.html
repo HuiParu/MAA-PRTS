@@ -76,7 +76,7 @@
           <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
         </svg>
         <input id="search-input" type="text" autocomplete="off" spellcheck="false"
-               placeholder="输入关卡代号 TL-10，或活动代号 act55side / 活动名 残照终尽">
+               placeholder="输入关卡代号 TL-10，或活动代号 act55side / 活动名 月行水上">
         <button class="search-btn" id="btn-search">搜索作业</button>
       </div>
       <div class="quick-row" id="quick-row"></div>
@@ -135,6 +135,15 @@
       <p class="hint">拖动可调整顺序，顺序就是 MAA 里的执行顺序<br>会先关闭 MAA → 备份配置 → 写入作业 → 重新启动</p>
     </div>
   </aside>
+
+  <!-- 窄屏时作业集变抽屉，用这个浮动按钮开关（放在 .app 内，层级才压得住） -->
+  <div class="basket-mask" id="basket-mask"></div>
+  <button class="basket-fab" id="basket-fab" title="打开作业集">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 7h16M4 12h16M4 17h10"/>
+    </svg>
+    <span class="fab-count" id="fab-count" hidden>0</span>
+  </button>
 </div>
 
 <div id="modal-root"></div>

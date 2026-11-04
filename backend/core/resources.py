@@ -10,6 +10,7 @@ import io
 import json
 import re
 import threading
+import time
 
 from . import settings
 
@@ -48,10 +49,14 @@ def _stages():
             return _cache['stages']
         p = pack()
         zones = p.get('zones') or {}
+        acts = p.get('activities') or {}
         rows = []
         for st in p.get('stages') or []:
             zid = st.get('zone') or ''
             zone = zones.get(zid) or {}
+            # 活动正式名：stage id 前缀就是 act 编号（act55side_10 → act55side）
+            gid = st['id'].split('_')[0]
+            act = acts.get(gid) or {}
             rows.append({
                 'stageId': st['id'],
                 'code': st.get('code') or '',
@@ -59,6 +64,7 @@ def _stages():
                 'zoneId': zid,
                 'zoneName': zone.get('name') or '',
                 'zoneType': zone.get('type') or '',
+                'activity': act.get('name') or '',
                 'difficulty': '',
                 'danger': '',
             })
@@ -103,23 +109,37 @@ def resolve(keyword: str) -> dict:
            and not s['zoneId'].startswith('tower')]
     if hit:
         hit.sort(key=lambda r: (len(r['code']), r['code']))
-        return {'mode': 'activity', 'title': '%s 系列（%d 关）' % (kw.upper(), len(hit)),
+        title = '%s 系列（%d 关）' % (kw.upper(), len(hit))
+        # 整个系列只属于一个活动时，把活动名带上（SR → 月行水上 · SR 系列）
+        gids = {s['stageId'].split('_')[0] for s in hit}
+        if len(gids) == 1:
+            act = activity_table().get(gids.pop()) or {}
+            if act.get('name'):
+                title = '%s · %s 系列（%d 关）' % (act['name'], kw.upper(), len(hit))
+        return {'mode': 'activity', 'title': title,
                 'keyword': kw, 'stages': hit}
 
     # 4. 活动内部 id 前缀（act55side → 该活动全部关卡）
     hit = [s for s in stages if s['stageId'].lower().startswith(low) and '_' in s['stageId']]
     if hit:
-        zone_name = ''
-        for s in hit:
-            if s['zoneName']:
-                zone_name = s['zoneName']
-                break
         return {'mode': 'activity',
-                'title': '%s（%d 关）' % (zone_name or kw, len(hit)),
+                'title': '%s（%d 关）' % (_act_name(hit[0]['stageId'], hit), len(hit)),
                 'keyword': kw, 'stages': hit}
 
-    # 5. 中文活动名 / 关卡名模糊
+    # 5. 活动正式名 / 分区名 / 关卡名 模糊
     n = _norm(kw)
+    if n:
+        best = None
+        for aid, a in activity_table().items():
+            if n in _norm(a.get('name')):
+                hs = [s for s in stages if s['stageId'].startswith(aid + '_')]
+                if hs and (best is None or len(hs) > len(best[1])):
+                    best = (a['name'], hs)
+        if best:
+            return {'mode': 'activity',
+                    'title': '%s（%d 关）' % (best[0], len(best[1])),
+                    'keyword': kw, 'stages': best[1]}
+
     hit = [s for s in stages if n and n in _norm(s['zoneName'])]
     if not hit:
         hit = [s for s in stages if n and n in _norm(s['name'])]
@@ -133,11 +153,25 @@ def resolve(keyword: str) -> dict:
     return {'mode': 'unknown', 'title': '', 'keyword': kw, 'stages': []}
 
 
-def activity_list(limit: int = 16) -> list:
-    """近期活动（按 act 编号倒序），给前端做快捷入口
+def _act_name(stage_id: str, rows=None) -> str:
+    """取 stage 所属活动的正式名（没有就用 zone 名兜底）"""
+    gid = str(stage_id).split('_')[0]
+    a = activity_table().get(gid) or {}
+    if a.get('name'):
+        return a['name']
+    if rows:
+        for r in rows:
+            if r.get('zoneName'):
+                return r['zoneName']
+    return gid
 
-    每条带 prefix（关卡代号字母，残照终尽 → TL），前端把它显示在活动名后面，
-    用户一眼就知道这个活动搜什么代号。
+
+def activity_list(limit: int = 16) -> list:
+    """近期活动（按开始时间倒序），给前端做快捷入口
+
+    名称用游戏内的活动正式名（activity_table），不是 zone 分区名：
+    残照终尽 → 时间啊，向前！、通学路 → 月行水上。
+    每条带 prefix（关卡代号字母，如 TL），前端显示在名字后面。
     """
     groups = {}
     for s in _stages():
@@ -158,17 +192,41 @@ def activity_list(limit: int = 16) -> list:
         if s['zoneName'] and not g['name']:
             g['name'] = s['zoneName']
 
-    rows = sorted(groups.values(), key=lambda r: -r['num'])[:limit]
+    acts = activity_table()
+
+    def act_span(r):
+        a = acts.get(r['id']) or {}
+        return a.get('start') or 0, a.get('end') or 0
+
+    def sort_key(r):
+        a = acts.get(r['id']) or {}
+        return (a.get('start') or 0, r['num'])
+
+    # 正在进行的活动永远排最前，其次是还没开始的，最后才是已结束的（各自按开始时间倒序）
+    now = int(time.time())
+
+    def state_rank(r):
+        s, e = act_span(r)
+        if s and s <= now and (not e or now <= e):
+            return 2
+        if s and s > now:
+            return 1
+        return 0
+
+    rows = [r for r in groups.values() if r['count'] >= 3]
+    rows.sort(key=lambda r: (state_rank(r), sort_key(r)), reverse=True)
+
     out = []
-    for r in rows:
-        if r['count'] < 3:
-            continue
+    for r in rows[:limit]:
+        a = acts.get(r['id']) or {}
         out.append({
             'id': r['id'],
             'num': r['num'],
-            'name': r['name'] or r['id'],
+            'name': a.get('name') or r['name'] or r['id'],
             'prefix': _code_prefix(r['codes']),
             'count': r['count'],
+            'start': a.get('start') or 0,
+            'end': a.get('end') or 0,
         })
     return out
 
@@ -184,6 +242,11 @@ def _code_prefix(codes) -> str:
     if not hits:
         return ''
     return max(hits.items(), key=lambda kv: kv[1])[0]
+
+
+def activity_table() -> dict:
+    """活动正式名：{act55side: {name, start, end}}"""
+    return pack().get('activities') or {}
 
 
 def char_table() -> dict:

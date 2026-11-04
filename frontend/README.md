@@ -59,6 +59,7 @@ api('/api/xxx', body)   // 统一包成 {ok, data|error}
 | `showMissing()` | 缺卡清单弹窗，按星级分组，只显示名字 |
 | `renderUpdate()` | 资源包更新提示条（顶部的绿色条） |
 | `renderQuick()` | 快捷活动胶囊：活动名 + 关卡代号字母 + NEW 角标 |
+| `toggleBasket()` | 窄屏抽屉开关（≤1180px），控制 `.basket.show`、遮罩与浮动按钮 |
 | `renderResult()` | 单关卡卡片 / 活动关卡列表两套版式 |
 | `renderBasket()` | 右侧作业集（含拖动排序） |
 | `openOnboarding()` | 首次启动的两步引导（含 token 获取说明） |
@@ -68,7 +69,8 @@ api('/api/xxx', body)   // 统一包成 {ok, data|error}
 **快捷栏**
 
 快捷栏只放活动，不再有 TR 之类的系列入口（要搜系列直接在搜索框输 `TR-`）。
-每个胶囊是「活动名 + 关卡代号字母」，例如 `残照终尽 TL`：
+每个胶囊是「活动名 + 关卡代号字母」，例如 `时间啊，向前！ TL`。
+顺序直接用后端给的（进行中优先），前端不再按编号重排，否则一堆 NEW 会把当前活动挤出可视区：
 字母由后端从关卡代号（TL-1…TL-10）里取，用户照着输 `TL-10` 就能搜。
 
 排序规则：`S.gamedata.pending.newActs` 里的活动永远排最前并带 `NEW` 角标，

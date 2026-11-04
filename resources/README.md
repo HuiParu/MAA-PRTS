@@ -29,7 +29,7 @@
   "version": "2026.11.05",                    // 资源版本（生成日期），前端和更新提示用它
   "fingerprint": "3af97ae0",                  // 内容指纹，同一天重新生成也能区分
   "generatedAt": "2026-11-05T01:20:00+08:00",
-  "counts": { "chars": 469, "skills": 1846, "equips": 924, "stages": 3647, "zones": 492 },
+  "counts": { "chars": 469, "skills": 1846, "equips": 924, "stages": 3647, "zones": 492, "activities": 325 },
 
   "chars": {
     "char_4100_caper": {
@@ -42,7 +42,9 @@
   "skills": { "skchr_xxx_2": "技能名" },
   "equips": { "uniequip_xxx": { "uniEquipName": "模组名", "typeIcon": "original|xxx" } },
   "stages": [{ "id": "act55side_10", "code": "TL-10", "name": "活着的重量", "zone": "act55side" }],
-  "zones":  { "act55side": { "name": "残照终尽", "type": "ACTIVITY" } },
+  "zones":  { "act55side_zone1": { "name": "残照终尽", "type": "ACTIVITY" } },
+  // 活动正式名，界面显示用这个（zone 名只是地图分区名，不是活动名）
+  "activities": { "act55side": { "name": "时间啊，向前！", "start": 1793487600, "end": 1795291199 } },
   "subProfessions": { "loopshooter": "回环射手" }
 }
 ```
@@ -75,7 +77,8 @@ python resources\make_pack.py --excel "D:\ArknightsGameResource\gamedata\excel"
 **只换资源、不重装程序**：程序优先读项目目录下的 `resources/arknights.json`，
 把新包直接覆盖进去（或让用户下个新包丢到 `resources/`）即可；
 启动时 `version.py` 发现 `version`/`fingerprint` 变了，会在界面顶部提示
-「游戏资源已更新到 xxxx，新增活动 残照终尽 TL …」，新活动同时排到快捷栏最前面。
+「游戏资源已更新到 xxxx，新增活动 时间啊，向前！ TL …」。
+快捷栏顺序由后端定：进行中的活动排最前，其次按开始时间倒序；NEW 只是角标，不参与重排。
 
 `--excel` 指向 `ArknightsGameResource` 的 `gamedata/excel` 目录，该仓库可以用
 `git clone https://github.com/Kengxxiao/ArknightsGameResource` 获取，只用来生成包，运行时不需要它。
