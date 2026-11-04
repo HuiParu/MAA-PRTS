@@ -6,6 +6,23 @@
 整个程序**不依赖外部脚本和游戏资源目录**，token、账号配置、日志全部保存在本项目的
 `skland/` 与 `config/` 里，随时可以整个文件夹打包带走。
 
+## 下载
+
+**[⬇ MAA-PRTS v2.2.0 · Windows x64（12.5 MB）](https://github.com/HuiParu/MAA-PRTS/releases/latest)**
+
+解压到任意可写目录（不要放 `C:\Program Files`），双击 `MAA-PRTS.exe` 即可。
+`_internal` 文件夹必须和 exe 放在一起，别只把 exe 拖出来。
+
+```
+MAA-PRTS\
+  MAA-PRTS.exe
+  _internal\        ← 必须一起保留
+  README.txt        ← token 获取步骤 + 常见问题
+```
+
+首次启动会引导两步：粘贴森空岛 token → 选择 MAA 根目录（含 `MAA.exe` 的那一层）。
+不想下载成品也可以按下面的「快速开始」从源码跑。
+
 ---
 
 ## 功能
@@ -28,18 +45,23 @@
 
 ## 快速开始
 
-### 方式一：跑编译版（推荐，无需 Python）
+### 方式一：用 Release 里的压缩包（普通用户）
 
-```
-dist\MAA-PRTS\MAA-PRTS.exe
-```
+从上面的「下载」拿 `MAA-PRTS-v2.2.0-win64.zip`，解压后双击 `MAA-PRTS.exe` 即可，不用装 Python。
 
-或者双击根目录的 **`启动.bat`**（有编译版会自动用编译版）。
-
-### 方式二：跑源码（需要 Python 3.10+）
+### 方式二：自己打包
 
 ```bat
-pip install pywebview
+pip install pywebview pythonnet pyinstaller
+python build.py
+```
+
+产物在 `dist\MAA-PRTS\`，整个文件夹拷走就能用。
+
+### 方式三：跑源码（需要 Python 3.10+）
+
+```bat
+pip install pywebview pythonnet
 python backend\main.py
 ```
 
