@@ -74,3 +74,23 @@ def get(tid, since=0):
         out['logs'] = t['logs'][since:]
         out['logCount'] = len(t['logs'])
         return out
+
+
+def running():
+    with _lock:
+        return [t for t in _tasks.values() if t['status'] == 'running']
+
+
+def wait_all(timeout=5.0):
+    """等所有在跑的任务结束（进程退出前调用）。
+
+    返回超时后仍未结束的任务标题列表；全部跑完则返回 []。
+    """
+    deadline = time.time() + timeout
+    while True:
+        left = running()
+        if not left:
+            return []
+        if time.time() >= deadline:
+            return [t['title'] for t in left]
+        time.sleep(0.1)

@@ -36,5 +36,6 @@ python build.py
 ## 注意
 
 - 本目录由脚本生成，不要手改里面的文件（下次打包会被覆盖）。
-- `.gitignore` 默认忽略 `dist/` 与 `build/`，仓库里只放源码；要发版请走 Release 附件。
+- `.gitignore` 忽略 `build/`、`build_*/`、`dist/`、`dist_*/`；本文件 `dist/README.md` 是
+  已入库的例外（跟踪中的文件不受 ignore 规则影响）。产物不进仓库，发版走 Release 附件。
 - 改了 `frontend/` 或 `resources/` 之后必须重新打包，exe 用的是包内的副本。

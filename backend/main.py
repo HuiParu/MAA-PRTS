@@ -21,7 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-from core import accounts, api, settings, version  # noqa: E402
+from core import accounts, api, settings, tasks, version  # noqa: E402
 
 WEB = settings.static_dir()
 LOG_PATH = settings.LOG_PATH
@@ -49,6 +49,35 @@ def log(msg):
 
 
 # ---------------------------------------------------------------- HTTP
+def trusted_request(headers, server_address):
+    """防跨站请求：Host 必须指回本服务；带 Origin 时必须同源；
+    带 Sec-Fetch-Site 时不得是跨站。
+
+    服务只绑 127.0.0.1 且接口无鉴权，但浏览器里打开的任何网页都能向
+    127.0.0.1 的端口发跨站请求（CSRF，触发写入 MAA / 改设置等副作用接口），
+    恶意域名解析到 127.0.0.1 还能借 DNS 重绑定直接读接口。
+
+    三层校验各挡一类：
+    - Host：DNS 重绑定（Host 会是攻击者的域名）
+    - Origin：fetch/XHR/表单 POST 类跨站请求（这类总带 Origin）
+    - Sec-Fetch-Site：<img>/<script>/顶层导航这类不带 Origin 的盲打
+      （浏览器对每个请求都带该头：same-origin / same-site / none 放行，
+      cross-site 拒绝；curl 和老客户端没有这个头，不拦）
+    """
+    port = server_address[1]
+    hosts = {'127.0.0.1:%d' % port, 'localhost:%d' % port}
+    host = (headers.get('Host') or '').strip().lower()
+    if host not in hosts:
+        return False
+    origin = (headers.get('Origin') or '').strip().lower()
+    if origin and origin not in {'http://' + h for h in hosts}:
+        return False
+    sfs = (headers.get('Sec-Fetch-Site') or '').strip().lower()
+    if sfs and sfs not in ('same-origin', 'same-site', 'none'):
+        return False
+    return True
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = 'MAA-PRTS/%s' % version.APP_VERSION
     protocol_version = 'HTTP/1.1'
@@ -102,6 +131,9 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, data, api.MIME.get(ext, 'application/octet-stream'))
 
     def do_GET(self):
+        if not trusted_request(self.headers, self.server.server_address):
+            self._reject()
+            return
         q, path = self._query()
         if path.startswith('/api/'):
             if path == '/api/ping':
@@ -120,6 +152,9 @@ class Handler(BaseHTTPRequestHandler):
         self._static(path)
 
     def do_POST(self):
+        if not trusted_request(self.headers, self.server.server_address):
+            self._reject()
+            return
         q, path = self._query()
         if path == '/api/ping':
             _last_ping[0] = time.time()
@@ -139,6 +174,11 @@ class Handler(BaseHTTPRequestHandler):
         log(tb)
         self._json({'ok': False, 'error': '%s: %s' % (type(e).__name__, e),
                     'trace': tb.splitlines()[-3:]}, 500)
+
+    def _reject(self):
+        log('已拒绝可疑请求：Host=%r Origin=%r' % (
+            self.headers.get('Host'), self.headers.get('Origin')))
+        self._send(403, b'forbidden', 'text/plain; charset=utf-8')
 
 
 def find_port(start=8787, tries=40):
@@ -224,7 +264,7 @@ class Bridge:
             return {'ok': False, 'error': str(e)}
 
     def quit(self):
-        os._exit(0)
+        _quit(0, '用户退出')
 
     def minimize(self):
         return {'ok': True}
@@ -235,6 +275,29 @@ def serve(port):
     srv.daemon_threads = True
     _srv[0] = srv
     srv.serve_forever()
+
+
+def _quit(code=0, reason='退出'):
+    """进程统一出口：先等在跑的后台任务收尾，再关服务退出。
+
+    同步账号、写入 MAA 都是后台线程，直接 os._exit 会把它们拦腰斩断——
+    配置写入本身是 .tmp + os.replace 原子写不怕斩，但任务日志会丢、
+    app.log 里也看不出个所以然。退出前最多等 5 秒，等不完就如实记录。
+    """
+    log('正在退出（%s）…' % reason)
+    try:
+        left = tasks.wait_all(5)
+        if left:
+            log('仍有 %d 个任务未完成，不再等待：%s' % (len(left), '、'.join(left)))
+    except KeyboardInterrupt:
+        log('再次中断，不再等待后台任务')
+    try:
+        if _srv[0]:
+            _srv[0].shutdown()
+    except BaseException:
+        pass
+    log('已退出')
+    os._exit(code)
 
 
 def main():
@@ -261,7 +324,7 @@ def main():
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
-            pass
+            _quit(0, 'Ctrl+C')
         return 0
 
     import webview
@@ -276,13 +339,7 @@ def main():
         js_api=Bridge(),
     )
     webview.start(debug=debug, private_mode=False)
-    log('窗口已关闭，退出')
-    try:
-        if _srv[0]:
-            _srv[0].shutdown()
-    except Exception:
-        pass
-    os._exit(0)
+    _quit(0, '窗口已关闭')
 
 
 if __name__ == '__main__':

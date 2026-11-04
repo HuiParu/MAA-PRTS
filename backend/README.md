@@ -33,7 +33,7 @@ main()
  ├─ find_port()            8787 起，被占用就 +1（Windows 用独占绑定，防止双开抢端口）
  ├─ Thread: serve(port)    ThreadingHTTPServer，HTTP/1.1 长连接
  ├─ 建窗口 webview.create_window(js_api = Bridge())
- └─ webview.start()        窗口关闭后 shutdown 并退出进程
+ └─ webview.start()        窗口关闭后 _quit()：等后台任务收尾（最多 5 秒）→ shutdown → 退出
 ```
 
 日志同时写 `config/app.log` 和控制台，超过 2 MB 轮转为 `app.log.1`。
@@ -52,22 +52,47 @@ main()
 
 ## 接口一览
 
+`api.py` 的 `ROUTES` 共注册 21 条（`/api/ping` 在 `main.py` 里特判，不在此表）。
+路由本身不分 GET/POST——同一处理函数两种方法都能进。表中的方法：前端在用的
+12 条按实际调用标注；其余 9 条前端暂未调用（预留 / 外部用），按语义标注
+（POST = 需要带 body）。
+
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/bootstrap` | 一次性拉：设置、账号列表、MAA 状态、活动、路径、资源包信息、资源版本、首启标记 |
+| POST | `/api/settings` | 保存设置（白名单 `maaDir` / `profile` / `autoStartMaa` / `lastAccount`） |
 | GET | `/api/accounts` | 账号列表（含每个账号的统计摘要） |
 | GET | `/api/account?file=` | 单个账号完整配置：account / stats / missing / chars |
-| POST | `/api/account/refresh` | 同步账号。带 `token` 同步单个并记入 `tokens.txt`；不带则按 `tokens.txt` 全部同步 |
-| GET | `/api/search?q=` | 搜索作业，返回 stage/activity 两种结构 |
-| GET | `/api/op?id=` | 作业详情（干员与要求、动作数、`maa://` 代码） |
+| POST | `/api/account/maa` | 把 `maa.profile` 等用户字段写回账号 JSON（同步不覆盖的那几个） |
+| POST | `/api/account/remove` | 删除账号：不真删，移入 `accounts/_removed/` 备份 |
+| POST | `/api/account/refresh` | 同步账号。带 `token` 同步单个并记入 `tokens.txt`；不带则按 `tokens.txt` 全部同步。返回 `taskId` |
+| POST | `/api/search` | 搜作业 + 练度匹配（body：`q` / `file` / `pages` / `minRating` / `limit`） |
+| GET | `/api/activities` | 近期活动列表（快捷栏数据源） |
 | GET | `/api/gamedata` | 资源包版本状态（含 `pending` 更新提示） |
 | POST | `/api/gamedata/ack` | 清掉待提示的资源更新 |
+| GET | `/api/op?id=` | 作业详情（干员与要求、动作数、`maa://` 代码） |
 | GET | `/api/maa/status` | MAA 是否运行、配置列表、当前配置 |
 | GET | `/api/maa/probe?dir=` | 检测目录是不是 MAA 根目录（引导/设置用） |
-| POST | `/api/maa/apply` | 写入作业集：关 MAA → 备份 → 下载 → 写 TaskList → 重启 |
-| GET | `/api/task?id=&since=` | 任务状态与增量日志 |
+| POST | `/api/maa/close` | 关闭正在运行的 MAA 进程 |
+| POST | `/api/maa/open` | 启动 `MAA.exe` |
+| POST | `/api/maa/apply` | 写入作业集：关 MAA → 备份 → 下载 → 写 TaskList → 重启。返回 `taskId` |
+| POST | `/api/maa/clear` | 清空某配置的 `Copilot.TaskList` |
+| GET | `/api/maa/tasklist?profile=` | 读 MAA 某配置当前的 `TaskList` |
+| GET | `/api/task?id=&since=` | 后台任务状态与增量日志（`since` 是日志游标） |
+| POST | `/api/export` | 导出「作业站本地导入」格式到 `skland/accounts/作业站/` |
 
 所有响应统一为 `{"ok": true, "data": ...}` 或 `{"ok": false, "error": "..."}`。
+
+### 防跨站（`main.py::trusted_request`）
+
+接口无鉴权（本机桌面应用定位），但 `do_GET` / `do_POST` 入口会校验，不过关直接 403：
+
+- **Host** 必须是 `127.0.0.1:<port>` / `localhost:<port>`——挡 DNS 重绑定；
+- 带 **Origin** 时必须同源——挡 fetch / XHR / 表单 POST 类跨站请求；
+- 带 **Sec-Fetch-Site** 时不得是 `cross-site`——挡 `<img>` / `<script>` / 顶层导航
+  这类不带 Origin 的盲打（curl 和老客户端没有这个头，不拦）。
+
+pywebview 窗口与浏览器直开都是同源，不受影响。
 
 ## 版本管理（`version.py`）
 
