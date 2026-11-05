@@ -2,6 +2,7 @@
 """账号配置：读取 accounts/*.json、内置 token 同步"""
 from __future__ import annotations
 
+import base64
 import io
 import json
 import os
@@ -119,54 +120,121 @@ def save_maa_meta(file: str, patch: dict) -> dict:
 
 
 # ---------------------------------------------------------------- token 存储
-TOKENS_HEADER = """# ============================================================
-# 森空岛 token 列表（一行一个账号，文件在项目 skland/ 目录内）
-# 写法：
-#   token                      只有 token
-#   备注:token                  带备注（备注只用于日志和 alias 字段）
-#   备注:token:文件名.json      指定生成的账号文件名
-#   备注 token                  空格分隔（备注可含空格，整行不能带冒号）
-# 以 # 开头的是注释；同一 token 写多次只处理第一次。
-# 界面里「添加账号」也会自动追加到这里，方便以后一键同步全部。
-# ============================================================
-"""
+# config/skland/tokens.json：多账号列表，逐条经 Windows DPAPI（CurrentUser）
+# 加密后存放，密钥绑定本机 + 当前 Windows 用户，拷到别的电脑无法解密。
+# 文件格式与迁移说明见 config/skland/README.md。
+
+from . import vault  # noqa: E402
 
 
-def ensure_tokens_file() -> str:
-    """tokens.txt 不存在就建一个只带注释的模板"""
+def _migrate_txt_if_any():
+    """旧版明文 tokens.txt → 加密 tokens.json
+
+    先写 tokens.json 成功、再把原 txt 改名 .bak——中途任何一步失败，
+    原数据都还在；txt 读不了（编码坏等）则改名 .broken 留证并报错。
+    """
+    txt = os.path.join(settings.skland_dir(), 'tokens.txt')
     path = settings.tokens_file()
-    if not os.path.isfile(path):
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with io.open(path, 'w', encoding='utf-8') as f:
-            f.write(TOKENS_HEADER)
-    return path
-
-
-def _token_exists(path: str, token: str) -> bool:
+    if not os.path.isfile(txt) or os.path.isfile(path):
+        return
     try:
-        with io.open(path, encoding='utf-8-sig') as f:
-            for raw in f:
-                s = raw.strip()
-                if not s or s.startswith('#'):
-                    continue
-                if s.split(':')[-1].strip() == token or s == token:
-                    return True
+        items = [{'alias': alias or '', 'token': token}
+                 for alias, token, _out, _line in updater.parse_tokens_file(txt)
+                 if token]
     except Exception:
-        pass
-    return False
+        os.replace(txt, txt + '.broken')
+        raise ValueError('旧 tokens.txt 读取失败（编码损坏？），已改名为 %s，'
+                         '请手动检查。' % os.path.basename(txt + '.broken'))
+    _save_tokens(items)
+    os.replace(txt, txt + '.bak')
+
+
+def _save_tokens(items: list):
+    """逐条加密落盘：文件里能看到有几条、备注是什么，token 本身是密文"""
+    path = settings.tokens_file()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    env = {
+        'version': 2,
+        'cipher': 'dpapi',
+        'note': 'Windows DPAPI(CurrentUser) 逐条加密：仅本机当前 Windows 用户可解，拷到别的电脑无效。',
+        'tokens': [
+            {
+                'alias': (e.get('alias') or '').strip(),
+                'addedAt': e.get('addedAt') or '',
+                'data': base64.b64encode(
+                    vault.protect((e.get('token') or '').strip().encode('utf-8'))
+                ).decode('ascii'),
+            }
+            for e in items if (e.get('token') or '').strip()
+        ],
+    }
+    tmp = path + '.tmp'
+    with io.open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(env, f, ensure_ascii=False, indent=2)
+        f.write('\n')
+    os.replace(tmp, path)
+
+
+def load_tokens() -> list:
+    """读出 token 条目 [{"alias", "token", "addedAt"}]；解不开时给出明确报错"""
+    path = settings.tokens_file()
+    _migrate_txt_if_any()
+    if not os.path.isfile(path):
+        return []
+    env = _load(path) or {}
+    if env.get('cipher') != 'dpapi' or not isinstance(env.get('tokens'), list):
+        raise ValueError('%s 不是有效的加密 token 文件' % os.path.basename(path))
+    items = []
+    for i, ent in enumerate(env['tokens'], 1):
+        try:
+            token = vault.unprotect(base64.b64decode(ent.get('data') or '')).decode('utf-8')
+        except Exception:
+            raise ValueError(
+                'tokens.json 第 %d 条无法解密：密钥绑定本机与当前 Windows 用户，'
+                '换电脑 / 换用户后需要重新粘贴 token。' % i)
+        if token.strip():
+            items.append({'alias': (ent.get('alias') or '').strip(),
+                          'token': token.strip(),
+                          'addedAt': ent.get('addedAt') or ''})
+    return items
+
+
+# 启动自检发现 token 文件读不开时，把原因存这里，main 起来后写进 app.log
+TOKENS_WARNING = ''
+
+
+def ensure_tokens() -> list:
+    """启动自检：迁移旧 txt → 读加密文件；读不开就把坏文件改名留证、重建空的"""
+    global TOKENS_WARNING
+    TOKENS_WARNING = ''
+    try:
+        items = load_tokens()
+    except ValueError as e:
+        broken = settings.tokens_file() + '.broken'
+        try:
+            os.replace(settings.tokens_file(), broken)
+        except Exception:
+            pass
+        _save_tokens([])
+        items = []
+        TOKENS_WARNING = ('%s；已把原文件改名为 %s，请在界面里重新添加账号。'
+                          % (e, os.path.basename(broken)))
+    if not os.path.isfile(settings.tokens_file()):
+        _save_tokens([])
+    return items
 
 
 def remember_token(token: str, alias: str = '') -> bool:
-    """把界面上粘贴的 token 记到 skland/tokens.txt，返回是否新增"""
+    """把界面上粘贴的 token 记入加密存储，返回是否新增"""
     token = (token or '').strip()
     if not token:
         return False
-    path = ensure_tokens_file()
-    if _token_exists(path, token):
+    items = load_tokens()
+    if any(e.get('token') == token for e in items):
         return False
-    line = ('%s:%s' % (alias.strip(), token)) if alias and alias.strip() else token
-    with io.open(path, 'a', encoding='utf-8') as f:
-        f.write(line + '\n')
+    items.append({'alias': (alias or '').strip(), 'token': token,
+                  'addedAt': updater.now_iso()})
+    _save_tokens(items)
     return True
 
 
@@ -186,7 +254,7 @@ def _run_updater(tid, token=None, alias=None, with_skins=False):
         return updater.sync_one(token, alias or '', settings.accounts_dir(),
                                 log, with_skins=with_skins,
                                 cache_path=settings.subprof_cache())
-    return updater.sync_many(ensure_tokens_file(), settings.accounts_dir(),
+    return updater.sync_many(load_tokens(), settings.accounts_dir(),
                              log, with_skins=with_skins,
                              cache_path=settings.subprof_cache())
 

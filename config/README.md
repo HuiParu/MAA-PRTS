@@ -1,9 +1,11 @@
-# config —— 应用配置与日志
+# config —— 用户数据：设置、日志、账号
 
 ## 用途
 
-存程序自己的设置和运行日志。第一次运行时目录是空的，程序会自动创建
-`settings.json`（首次保存设置时）与 `app.log`。
+程序所有可写数据都在这个目录里：自己的设置、运行日志，以及账号数据
+（`skland/` 子目录：DPAPI 加密的 `tokens.json`、账号练度 `accounts/*.json`，
+详见 [skland/README.md](skland/README.md)）。第一次运行时目录是空的，
+程序会按需自动创建。
 
 ## 文件
 
@@ -28,16 +30,10 @@
 这个文件可以直接手改；改完要重启程序生效（程序启动时读一次并缓存）。
 删掉它等于恢复默认：引导会重新出现，需要再填一次 MAA 目录。
 
-### app.log
+### app.log（已挪到 `debug/`）
 
-每行一条，`[HH:MM:SS] 内容`。记录启动信息、端口、接口异常堆栈、任务结果。
-超过 2 MB 自动改名为 `app.log.1` 并重新开始。
-
-排查问题时优先看这个文件：
-
-- 启动失败的 Python 报错会写在这里
-- `/api/*` 的异常会带 traceback 最后三行
-- 写入 MAA 的每一步也会打到任务日志（界面上能看，但只有这里留档）
+运行日志从本目录挪到了项目根的 `debug/app.log`（旧文件启动时自动挪走），
+说明见 [../debug/README.md](../debug/README.md)。
 
 ### gamedata.json
 
@@ -59,5 +55,6 @@
 
 ## 注意
 
-- 这些文件都不含账号 token 或干员数据，可以安全贴给别人看。
-- `.gitignore` 已忽略本目录下的 `settings.json`、`app.log`、`gamedata.json`。
+- 本层的 `settings.json` / `gamedata.json` 不含账号 token 或干员数据，可以安全贴给别人看。
+- `skland/` 子目录是账号数据：`tokens.json` 为 Windows DPAPI 加密（仅本机可解），
+  其余为练度 JSON——`.gitignore` 已忽略整个子目录（README 除外）。

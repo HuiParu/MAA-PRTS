@@ -7,13 +7,16 @@
       frontend/     页面（只读）
       backend/      服务端代码（只读）
       resources/    内置游戏资源包（只读）
-      skland/       ★ 用户数据：tokens.txt、accounts/*.json、subprof_cache.json
-      config/       ★ 用户数据：settings.json、app.log
+      config/       ★ 用户数据：settings.json、gamedata.json、
+                                 skland/（tokens.json 加密、accounts/、缓存）
+      debug/        运行日志 app.log（随时可删）
+                                 ——旧版根目录下的 skland/、config/ 里的 app.log
+                                 启动时自动并入/挪走
 
 「项目根」判定：
   - 源码运行：settings.py 往上三层
   - 打包运行：从 exe 目录逐级向上找，第一个同时含 frontend/ 与 backend/ 的目录；
-              找不到（例如把 dist/MAA-PRTS 单独拷走）就用 exe 所在目录
+              找不到（例如把 build/MAA-PRTS 单独拷走）就用 exe 所在目录
 """
 from __future__ import annotations
 
@@ -65,13 +68,63 @@ RES = resource_root()
 STATIC_DIR = os.path.join(RES, 'frontend')
 PACK_PATH = os.path.join(RES, 'resources', 'arknights.json')
 
-SKLAND_DIR = os.path.join(ROOT, 'skland')
-ACCOUNTS_DIR = os.path.join(SKLAND_DIR, 'accounts')
 CONFIG_DIR = os.path.join(ROOT, 'config')
+SKLAND_DIR = os.path.join(CONFIG_DIR, 'skland')
+ACCOUNTS_DIR = os.path.join(SKLAND_DIR, 'accounts')
 SETTINGS_PATH = os.path.join(CONFIG_DIR, 'settings.json')
-LOG_PATH = os.path.join(CONFIG_DIR, 'app.log')
+DEBUG_DIR = os.path.join(ROOT, 'debug')
+LOG_PATH = os.path.join(DEBUG_DIR, 'app.log')
 
-for _d in (SKLAND_DIR, ACCOUNTS_DIR, CONFIG_DIR):
+
+def _migrate_legacy_log():
+    """旧日志在 config/app.log，挪进 debug/（新位置已有同名文件则不动）"""
+    for name in ('app.log', 'app.log.1'):
+        src, dst = os.path.join(CONFIG_DIR, name), os.path.join(DEBUG_DIR, name)
+        if os.path.isfile(src) and not os.path.isfile(dst):
+            try:
+                os.makedirs(DEBUG_DIR, exist_ok=True)
+                os.replace(src, dst)
+            except Exception:
+                pass
+
+
+def _migrate_legacy_skland():
+    """旧版账号数据在 <项目根>/skland/，启动时并入 config/skland/
+
+    只搬文件不动内容：tokens.txt 的加密转换在 accounts.load_tokens() 里做。
+    新位置已有同名文件时跳过（宁可不搬也不覆盖），目录搬空才删。
+    """
+    old = os.path.join(ROOT, 'skland')
+    if not os.path.isdir(old) or os.path.abspath(old) == os.path.abspath(SKLAND_DIR):
+        return
+    import shutil
+    os.makedirs(SKLAND_DIR, exist_ok=True)
+    for name in os.listdir(old):
+        src, dst = os.path.join(old, name), os.path.join(SKLAND_DIR, name)
+        if os.path.exists(dst):
+            continue
+        try:
+            shutil.move(src, dst)
+        except Exception:
+            pass
+    # 搬空了才删目录；README.md 是旧版的入库说明，一并清掉（新版文档在 config/skland/）
+    try:
+        left = [n for n in os.listdir(old) if n != 'README.md']
+        if not left:
+            for n in os.listdir(old):
+                os.remove(os.path.join(old, n))
+            os.rmdir(old)
+    except Exception:
+        pass
+
+
+try:
+    _migrate_legacy_skland()
+    _migrate_legacy_log()
+except Exception:
+    pass
+
+for _d in (SKLAND_DIR, ACCOUNTS_DIR, CONFIG_DIR, DEBUG_DIR):
     try:
         os.makedirs(_d, exist_ok=True)
     except Exception:
@@ -142,7 +195,8 @@ def accounts_dir() -> str:
 
 
 def tokens_file() -> str:
-    return os.path.join(SKLAND_DIR, 'tokens.txt')
+    """加密的 token 存储（内容经 Windows DPAPI 加密，见 core/vault.py）"""
+    return os.path.join(SKLAND_DIR, 'tokens.json')
 
 
 def subprof_cache() -> str:

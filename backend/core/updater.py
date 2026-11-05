@@ -539,7 +539,11 @@ def sync_one(token, alias, accounts_dir, log, with_skins=False, cache_path=None)
 
 
 def parse_tokens_file(path):
-    """tokens.txt → [(alias, token, outname, lineno)]"""
+    """旧版明文 tokens.txt → [(alias, token, outname, lineno)]
+
+    现在只在迁移时用（accounts._migrate_txt_if_any），运行期的 token
+    存在加密的 config/skland/tokens.json 里。
+    """
     items = []
     with io.open(path, encoding='utf-8-sig') as f:
         for lineno, raw in enumerate(f, 1):
@@ -570,18 +574,22 @@ def parse_tokens_file(path):
     return uniq
 
 
-def sync_many(tokens_file, accounts_dir, log, with_skins=False, cache_path=None):
-    """批量同步 tokens.txt 里的全部账号，单个失败不影响其他"""
-    if not os.path.isfile(tokens_file):
-        raise FileNotFoundError('找不到 token 文件：%s' % tokens_file)
-    items = parse_tokens_file(tokens_file)
-    if not items:
-        raise RuntimeError('token 文件里没有有效条目')
-    log('读取 %s：%d 个 token' % (os.path.basename(tokens_file), len(items)))
+def sync_many(items, accounts_dir, log, with_skins=False, cache_path=None):
+    """批量同步 token 列表 [{"alias", "token"}]，单个失败不影响其他"""
+    seen, uniq = set(), []
+    for e in items or []:
+        token = (e.get('token') or '').strip()
+        alias = (e.get('alias') or '').strip()
+        if token and token not in seen:
+            seen.add(token)
+            uniq.append((alias, token))
+    if not uniq:
+        raise RuntimeError('token 列表为空，先在界面里添加账号')
+    log('token 共 %d 个' % len(uniq))
     log('-' * 60)
 
     ok, fail = 0, 0
-    for alias, token, _out, lineno in items:
+    for alias, token in uniq:
         log('')
         try:
             r = sync_one(token, alias, accounts_dir, log,

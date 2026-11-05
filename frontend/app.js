@@ -808,7 +808,7 @@ const TOKEN_GUIDE = `
     <li>按 <code>F12</code> 打开开发者工具，切到 <b>Network</b> 后刷新页面</li>
     <li>点开任意一个发往 <code>zonai.skland.com</code> 的请求，请求头里找 <code>token</code>，整段复制</li>
   </ol>
-  <span>token 就是账号凭证，只写在本机 <code>skland/tokens.txt</code>，不会上传。失效了重新取一次即可。</span>`;
+  <span>token 就是账号凭证，加密保存在本机 <code>config/skland/tokens.json</code>（Windows DPAPI，仅本机可解），不会上传。失效了重新取一次即可。</span>`;
 
 function openAddAccount() {
   const m = modal(`
@@ -900,7 +900,7 @@ function openOnboarding() {
             <button class="btn-plain mini" id="onb-token-help">怎么拿 token</button>
           </div>
           <div class="onb-hint token-guide" id="onb-token-guide" hidden>${TOKEN_GUIDE}</div>
-          <div class="onb-hint">token 会写进 <code>skland/tokens.txt</code>，下次打开可以一键同步全部账号。</div>
+          <div class="onb-hint">token 会加密写进 <code>config/skland/tokens.json</code>，下次打开可以一键同步全部账号。</div>
         </div>
       </div>
 
@@ -921,7 +921,7 @@ function openOnboarding() {
       <div class="log-box" id="task-log" style="display:none"></div>
 
       <div class="onb-foot">
-        <span class="onb-note">数据目录 <code>${esc(p.skland || 'skland/')}</code></span>
+        <span class="onb-note">数据目录 <code>${esc(p.skland || 'config/skland/')}</code></span>
         <div class="onb-btns">
           <button class="btn-plain" id="onb-skip">稍后设置</button>
           <button class="btn-solid" id="onb-go">保存并同步账号</button>
@@ -1140,7 +1140,7 @@ function bindGlobal() {
   $('#btn-clear-basket').addEventListener('click', () => { S.basket = []; renderBasket(); });
   $('#btn-refresh-all').addEventListener('click', async () => {
     const m = modal(`<h3>同步全部账号</h3>
-      <div class="sub">按 tokens.txt 逐个刷新，可能耗时 1~3 分钟。</div>
+      <div class="sub">按 tokens.json 逐个刷新，可能耗时 1~3 分钟。</div>
       <div class="log-box" id="task-log"></div>
       <div class="modal-foot"><button class="btn-plain" data-close>后台执行</button></div>`);
     try {

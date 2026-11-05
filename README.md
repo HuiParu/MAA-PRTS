@@ -4,7 +4,7 @@
 告诉你哪份作业能直接抄、哪份差一个人、哪份练度不够；挑好后一键写进 MAA 的多作业列表。
 
 整个程序**不依赖外部脚本和游戏资源目录**，token、账号配置、日志全部保存在本项目的
-`skland/` 与 `config/` 里，随时可以整个文件夹打包带走。
+`config/` 里（token 经 Windows DPAPI 加密，仅本机可解），随时可以整个文件夹打包带走。
 
 ## 下载
 
@@ -54,7 +54,7 @@ MAA-PRTS\
 
 双击 `打包.bat` 即可：首次运行会自动创建项目专用环境 `.venv` 并安装依赖，然后调用 PyInstaller 打包。
 
-产物在 `dist\MAA-PRTS\`，整个文件夹拷走就能用。
+产物在 `build\MAA-PRTS\`：整个文件夹就是发布包，压缩成 zip 即为 Release 附件。
 
 ### 方式三：跑源码（需要 Python 3.10+）
 
@@ -77,7 +77,7 @@ py -3 -m venv .venv
 
 1. **森空岛 Token** —— 粘贴 token（可加备注）。点击「怎么拿 token」有获取步骤：
    浏览器登录森空岛社区 → F12 → Network → 找发往 `zonai.skland.com` 的请求头里的 `token`。
-   程序会把它记到 `skland/tokens.txt`，以后点左上角的刷新按钮即可一键同步全部账号。
+   程序会把它加密记到 `config/skland/tokens.json`（Windows DPAPI，仅本机可解），以后点左上角的刷新按钮即可一键同步全部账号。
 2. **MAA 根目录** —— 选包含 `MAA.exe` 的文件夹，点「检测」确认能找到
    `MAA.exe` 与 `config/gui.new.json`。
 
@@ -92,12 +92,12 @@ py -3 -m venv .venv
 MAA-PRTS-1/
 ├── frontend/            页面（HTML/CSS/JS），由后端本地服务托管
 ├── backend/             服务端：窗口、HTTP 接口、匹配算法、MAA 读写
-├── skland/              ★ 用户数据：token 列表、账号练度 JSON
 ├── resources/           内置游戏资源包（干员表/关卡表）与打包脚本
-├── config/              ★ 用户数据：settings.json、app.log
-├── dist/                编译产物（PyInstaller 输出）
+├── config/              ★ 用户数据：settings.json、skland/（加密 token、账号练度）
+├── debug/               运行日志 app.log（可随手删）
+├── build/               构建产物（MAA-PRTS/ 发布包；中间文件用后即删）
 ├── build.py             打包脚本
-├── tools/setup/         启动/打包脚本共享的 Python 环境引导
+├── tools/               setup/（启动打包的环境引导）、smoketest/（冒烟测试）
 ├── 启动.bat / 调试启动.bat / 打包.bat
 └── README.md
 ```
@@ -110,15 +110,17 @@ MAA-PRTS-1/
 
 | 内容 | 位置 | 说明 |
 |---|---|---|
-| token 列表 | `skland/tokens.txt` | 一行一个账号，支持 `备注:token` |
-| 账号配置 | `skland/accounts/<昵称> <服务器>.json` | 干员练度 + 缺卡清单 |
-| 分支名缓存 | `skland/subprof_cache.json` | 分支中文名边用边学 |
+| token 列表 | `config/skland/tokens.json` | Windows DPAPI 加密，仅本机当前 Windows 用户可解 |
+| 账号配置 | `config/skland/accounts/<昵称> <服务器>.json` | 干员练度 + 缺卡清单 |
+| 分支名缓存 | `config/skland/subprof_cache.json` | 分支中文名边用边学 |
 | 应用设置 | `config/settings.json` | MAA 路径、默认配置名、上次选中的账号 |
 | 资源版本记录 | `config/gamedata.json` | 上次见到的资源包版本，用来判断要不要提示更新 |
-| 运行日志 | `config/app.log` | 超过 2 MB 自动轮转 |
+| 运行日志 | `debug/app.log` | 超过 2 MB 自动轮转，随时可删 |
 
 - 上传 GitHub 时这些都会由 `.gitignore` 排除，仓库里只有代码和资源包。
-- 换电脑只需要拷 `skland/` 和 `config/`，或者在引导里重新填一次 token。
+- token 密文绑定本机与 Windows 用户：换电脑时拷 `tokens.json` 过去**解不开**，
+  到新机器上重新粘贴一次 token 即可（账号练度 JSON 不加密，可以直接拷）。
+- 例外只有一个：MAA 根目录本身在你指定的位置，程序只按你填的路径去读写它的 `config/`。
 - 例外只有一个：MAA 根目录本身在你指定的位置，程序只按你填的路径去读写它的 `config/`。
 
 ---
@@ -129,10 +131,10 @@ MAA-PRTS-1/
 python build.py
 ```
 
-产物：`dist\MAA-PRTS\MAA-PRTS.exe`（onedir，约 30 MB）。
+产物：`build\MAA-PRTS\MAA-PRTS.exe`（onedir，约 30 MB）。
 
 打包只带 `frontend/` 与 `resources/` 两个只读目录。运行时如果 exe 还在项目里，
-数据目录会自动定位到项目根；如果把 `dist/MAA-PRTS` 单独拷走，数据就写在 exe 旁边。
+数据目录会自动定位到项目根；如果把 `build/MAA-PRTS` 单独拷走，数据就写在 exe 旁边。
 
 ---
 
@@ -173,7 +175,7 @@ MAA 运行时会回写配置，所以必须先关闭它——这一步程序会�
 
 **token 失效**
 森空岛 token 有有效期，失效后同步会打印 401。重新抓一个 token，
-把 `skland/tokens.txt` 里对应的那一行替换掉再同步即可。
+用界面「添加账号」粘一个新的即可（同一账号以最新 token 为准）。
 
 ---
 
@@ -183,4 +185,4 @@ MAA 运行时会回写配置，所以必须先关闭它——这一步程序会�
 作业版权归各作业作者所有，使用时请遵守 MAA 与作业站的相关约定。
 
 以 [MIT License](LICENSE) 开源。仓库里不含任何 token、账号数据与编译产物，
-`skland/` 与 `config/` 下只有说明文档，首次运行会自行生成数据文件。
+`config/` 下只有说明文档，首次运行会自行生成数据文件。

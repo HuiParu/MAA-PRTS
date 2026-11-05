@@ -39,7 +39,7 @@ def log(msg):
     except Exception:
         pass
     try:
-        os.makedirs(settings.CONFIG_DIR, exist_ok=True)
+        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
         if os.path.isfile(LOG_PATH) and os.path.getsize(LOG_PATH) > 2 * 1024 * 1024:
             os.replace(LOG_PATH, LOG_PATH + '.1')
         with open(LOG_PATH, 'a', encoding='utf-8') as f:
@@ -309,14 +309,17 @@ def main():
     time.sleep(0.25)
 
     st = settings.load()
-    accounts.ensure_tokens_file()
+    accounts.ensure_tokens()
     log('=' * 56)
     log('MAA-PRTS %s  界面 %s' % (version.APP_VERSION, url))
     log('项目目录  %s' % settings.project_root())
     log('账号数据  %s' % settings.skland_dir())
     log('配置文件  %s' % settings.SETTINGS_PATH)
+    log('日志文件  %s' % settings.LOG_PATH)
     log('MAA 目录  %s' % (st['maaDir'] or '（尚未设置，首次启动会提示）'))
     log('=' * 56)
+    if accounts.TOKENS_WARNING:
+        log('[警告] ' + accounts.TOKENS_WARNING)
 
     if no_window:
         log('（--no-window：只起服务，用浏览器打开上面的地址）')

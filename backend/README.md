@@ -17,7 +17,7 @@
 | `main.py` | 入口：找端口、起服务、开窗口、日志、原生桥 `Bridge` |
 | `core/settings.py` | 路径解析（项目根、skland、config）、`settings.json` 读写 |
 | `core/api.py` | 所有 `/api/*` 的实现与路由表，静态文件 MIME 表 |
-| `core/accounts.py` | 读 `skland/accounts/*.json`、token 落盘、后台同步 |
+| `core/accounts.py` | 读 `config/skland/accounts/*.json`、加密 token 读写、后台同步 |
 | `core/updater.py` | token → 账号配置的完整构建（练度、缺卡、统计、增量对比） |
 | `core/skland.py` | 森空岛鉴权链：token → grant → cred → 签名请求 → 绑定/角色数据 |
 | `core/copilot.py` | 作业站接口 + 干员要求匹配算法 |
@@ -36,7 +36,7 @@ main()
  └─ webview.start()        窗口关闭后 _quit()：等后台任务收尾（最多 5 秒）→ shutdown → 退出
 ```
 
-日志同时写 `config/app.log` 和控制台，超过 2 MB 轮转为 `app.log.1`。
+日志同时写 `debug/app.log` 和控制台，超过 2 MB 轮转为 `app.log.1`。
 
 ## 路径规则（重点）
 
@@ -47,8 +47,8 @@ main()
 | 只读资源 | 项目根 | `sys._MEIPASS`（PyInstaller 解包目录） |
 | 可写数据 | 项目根 | 从 exe 目录向上找第一个含 `frontend/` + `backend/` 的目录；找不到就用 exe 目录 |
 
-所以：在仓库里跑 exe，数据和源码共用一份（都在项目根的 `skland/`、`config/`）；
-把 `dist/MAA-PRTS` 单独拷给别人，数据就落在 exe 旁边。程序**不会**写项目目录以外的地方。
+所以：在仓库里跑 exe，数据和源码共用一份（都在项目根的 `config/`，账号数据在其 `skland/` 子目录）；
+把 `build/MAA-PRTS` 单独拷给别人，数据就落在 exe 旁边。程序**不会**写项目目录以外的地方。
 
 ## 接口一览
 
@@ -79,7 +79,7 @@ main()
 | POST | `/api/maa/clear` | 清空某配置的 `Copilot.TaskList` |
 | GET | `/api/maa/tasklist?profile=` | 读 MAA 某配置当前的 `TaskList` |
 | GET | `/api/task?id=&since=` | 后台任务状态与增量日志（`since` 是日志游标） |
-| POST | `/api/export` | 导出「作业站本地导入」格式到 `skland/accounts/作业站/` |
+| POST | `/api/export` | 导出「作业站本地导入」格式到 `config/skland/accounts/作业站/` |
 
 所有响应统一为 `{"ok": true, "data": ...}` 或 `{"ok": false, "error": "..."}`。
 
