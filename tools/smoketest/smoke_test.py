@@ -275,6 +275,67 @@ def check_copilot_normalize():
     assert len(content['actions']) == 6
 
 
+def check_copilot_difficulty():
+    """difficulty 是位标志：0/缺失=普通、1=普通、2=突袭、3=通用
+
+    写 MAA 时按标志拆条：通用作业要落「普通 + 突袭」两条，共用同一个作业文件。
+    """
+    from core import copilot
+
+    cases = [(None, 1), (0, 1), (1, 1), (2, 2), (3, 3), ('2', 2), ('x', 1)]
+    for raw, want in cases:
+        got = copilot.difficulty_flags({'difficulty': raw})
+        assert got == want, 'difficulty=%r 应为 %d，实际 %d' % (raw, want, got)
+    assert copilot.difficulty_text(1) == '普通'
+    assert copilot.difficulty_text(2) == '突袭'
+    assert copilot.difficulty_text(3) == '通用'
+
+
+def check_copilot_variants():
+    """有突袭版的关卡拆两行：普通行只要普通可用的、突袭行只要突袭可用的
+
+    通用作业（difficulty=3）两边都要出现；没有突袭版的关卡只出一行。
+    同时确认关卡表里 #f# / #s 这类变体不会被当成独立关卡重复列出。
+    """
+    from core import copilot, resources
+
+    stage = {'stageId': 'act13side_ex01', 'code': 'NL-EX-1', 'name': '都市怪谈',
+             'activity': '长夜临光', 'raid': True}
+    rows = [
+        {'id': 1, 'difficulty': 1, 'mode': 'ready'},
+        {'id': 2, 'difficulty': 2, 'mode': 'ready'},
+        {'id': 3, 'difficulty': 3, 'mode': 'ready'},
+        {'id': 4, 'difficulty': 3, 'mode': 'borrow'},
+    ]
+    normal, raid = copilot.stage_variants(stage, rows, limit=10)
+    assert normal['stage']['variant'] == 'normal', '第一行应该是普通'
+    assert raid['stage']['variant'] == 'raid', '第二行应该是突袭'
+    assert [r['id'] for r in normal['ops']] == [1, 3, 4], \
+        '普通行应含普通与通用作业，实际 %r' % [r['id'] for r in normal['ops']]
+    assert [r['id'] for r in raid['ops']] == [2, 3, 4], \
+        '突袭行应含突袭与通用作业，实际 %r' % [r['id'] for r in raid['ops']]
+    assert normal['total'] == 3 and raid['total'] == 3
+    assert normal['counts']['ready'] == 2 and raid['counts']['ready'] == 2
+
+    # 没有突袭版的关卡只有一行，variant 固定 normal
+    plain = copilot.stage_variants(dict(stage, raid=False), rows, limit=10)
+    assert len(plain) == 1 and plain[0]['stage']['variant'] == 'normal', '无突袭版的关卡不该拆行'
+
+    # 写 MAA 的条数由「加的时候在哪一行」决定，不是无脑按难度标志展开
+    assert copilot.entry_variants(3, 'normal') == [False], '从普通行加通用作业只写普通'
+    assert copilot.entry_variants(3, 'raid') == [True], '从突袭行加通用作业只写突袭'
+    assert copilot.entry_variants(3, None) == [False, True], '不指定行时按难度展开'
+    assert copilot.entry_variants(2, 'normal') == [True], '普通行里没有普通作业的兜底'
+    assert copilot.entry_variants(1, 'raid') == [False]
+
+    # 资源层：变体关不重复出现，主关带 raid 标记
+    nl_ex1 = resources.resolve('NL-EX-1')['stages']
+    assert len(nl_ex1) == 1, 'NL-EX-1 只应有一条，实际 %d' % len(nl_ex1)
+    assert nl_ex1[0]['stageId'] == 'act13side_ex01' and nl_ex1[0]['raid'] is True
+    # 粘 #f# 的 stage id 也要回落到主关
+    assert resources.resolve('act13side_ex01#f#')['stages'][0]['stageId'] == 'act13side_ex01'
+
+
 # ---------------------------------------------------------------- C. 启动冒烟
 def _copy_project(tmp):
     ignore = shutil.ignore_patterns(
@@ -380,6 +441,8 @@ def main():
         r.check('B5 坏密文自愈（.broken + 警告）', lambda: check_tokens_selfheal(tmp))
         r.check('B6 畸形旧 txt 留证并警告', lambda: check_tokens_bad_txt(tmp))
         r.check('B7 作业 json 修正后 MaaCore 可解析', check_copilot_normalize)
+        r.check('B8 难度位标志（普通/突袭/通用）', check_copilot_difficulty)
+        r.check('B9 突袭关拆普通/突袭两行', check_copilot_variants)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
