@@ -1,79 +1,79 @@
-# 发版 CI：合并提交落到 release 分支的那一刻触发（即 release 分支多了提交）
+# 发版 CI：往 release 分支合入「Release vX.Y.Z」PR 的那一刻发版
 #
-# 工作流（只做 Windows 平台）：
-#   1. 要发版时：从 release 分支拉新分支，把 backend/core/version.py 的
-#      APP_VERSION 改成新版本号（其它改动照常），PR 用 merge commit 合回
-#      release 分支
-#   2. 合并产生的提交推到 release 时本工作流自动触发：冒烟测试 → 打包 →
-#      压缩 build/MAA-PRTS 为 MAA-PRTS-vX.Y.Z-win-<架构>.zip →
-#      changelog 取上一个 tag 以来的全部 commits → 直接发布 Release，
-#      tag 打在这次合并提交上
-#   3. 版本号以 APP_VERSION 为准；若该版本的 tag 已存在（比如合并了没改
-#      版本号的 PR），本次推送跳过发版，避免覆盖已发布的 Release。
-#      要重发同一版本：先删掉对应 Release 与 tag，再重新触发
+# 工作流（只做 Windows 平台，抄 MAA ci.yml 的实现并精简）：
+#   - main 是开发主线；release 分支持续存在、平时不动，
+#     只在发版时从 main 拉分支往 release 开 PR
+#   - PR 标题「Release vX.Y.Z」即版本号；用 merge commit 合入 release，
+#     合并关闭 PR 时触发：
+#       meta    从标题提取版本号；严格 X.Y.Z 为正式版，带 -后缀 视为预发布
+#       release 在合并提交上：冒烟 → 注入 APP_VERSION → 打包 →
+#               zip 命名 MAA-PRTS-vX.Y.Z-win-<架构>.zip →
+#               changelog 取上一个 tag 以来的全部 commits → 发布 Release，
+#               tag 打在这次合并提交上
 name: Release
 
 on:
-  push:
-    branches:
-      - release
-  workflow_dispatch:
+  pull_request:
+    types: [closed]
+    branches: [release]
 
 permissions:
   contents: write
 
 # 连续合并不互相取消，按顺序逐个发版
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
   meta:
-    name: 读取版本号并检查是否已发过
+    name: 从 PR 标题提取版本
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.title, 'Release v')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      version: ${{ steps.version.outputs.version }}
-      skip: ${{ steps.version.outputs.skip }}
+      tag: ${{ steps.set_tag.outputs.tag }}
+      prerelease: ${{ steps.set_pre.outputs.prerelease }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0 # 要能看到已有 tag
-          show-progress: false
-
-      - name: Read APP_VERSION and check tag
-        id: version
-        shell: bash
+      - name: Set tag
+        id: set_tag
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          ver=$(sed -n "s/^APP_VERSION = '\([0-9][0-9.]*\)'.*/\1/p" backend/core/version.py | head -n1)
-          if [ -z "$ver" ]; then
-            echo "::error::无法从 backend/core/version.py 读出 APP_VERSION（应为 X.Y.Z 形式）"
+          tag=$(printf '%s' "$PR_TITLE" | grep -oE '^Release v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?' | sed 's/^Release //')
+          if [ -z "$tag" ]; then
+            echo "::error::无法从 PR 标题解析版本号：$PR_TITLE（应为「Release vX.Y.Z」）"
             exit 1
           fi
-          version="v$ver"
-          echo "version=$version" | tee -a "$GITHUB_OUTPUT"
-          if git rev-parse -q --verify "refs/tags/$version" >/dev/null 2>&1; then
-            echo "::notice::$version 已发布过（tag 已存在），本次推送跳过发版"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" | tee -a "$GITHUB_OUTPUT"
+
+      # 严格 v主.次.修订 为正式版，带 -后缀（如 v2.2.3-beta.1）视为预发布
+      - name: Check if it is a pre-release
+        id: set_pre
+        run: |
+          if [[ '${{ steps.set_tag.outputs.tag }}' =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "prerelease=false" | tee -a "$GITHUB_OUTPUT"
           else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" | tee -a $GITHUB_OUTPUT
           fi
 
   release:
     name: 构建并发布（Windows）
     needs: meta
-    if: needs.meta.outputs.skip != 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     env:
       PYTHONUTF8: '1'
       PYTHONIOENCODING: utf-8
-      VERSION: ${{ needs.meta.outputs.version }}
+      VERSION: ${{ needs.meta.outputs.tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0 # changelog 需要完整历史与 tag
           show-progress: false
 
@@ -87,6 +87,21 @@ jobs:
 
       - name: Run smoke test
         run: python -u tools/smoketest/smoke_test.py
+
+      # 构建时把版本号注进 APP_VERSION（只改 CI 副本，不提交），
+      # PR 里忘了 bump 也不会发错版
+      - name: Patch APP_VERSION to release version
+        shell: python
+        run: |
+          import io, os, re
+          version = os.environ['VERSION'].lstrip('v').split('-')[0]
+          path = 'backend/core/version.py'
+          src = io.open(path, encoding='utf-8').read()
+          new, n = re.subn(r"APP_VERSION = '[^']*'", "APP_VERSION = '%s'" % version, src, count=1)
+          if n != 1:
+              raise SystemExit('未能在 %s 中找到 APP_VERSION' % path)
+          io.open(path, 'w', encoding='utf-8', newline='').write(new)
+          print('APP_VERSION -> %s' % version)
 
       - name: Build
         run: python -u build.py
@@ -130,12 +145,13 @@ jobs:
           } > CHANGELOG.md
           cat CHANGELOG.md
 
-      # 合并提交已经落在 release 分支上，直接发布；tag 打在该提交上
+      # 合并提交已落在 release 分支上，直接发布；tag 打在该提交上
       - name: Publish release
         uses: softprops/action-gh-release@v3.0.3
         with:
-          tag_name: ${{ needs.meta.outputs.version }}
-          name: ${{ needs.meta.outputs.version }}
-          target_commitish: ${{ github.sha }}
+          tag_name: ${{ needs.meta.outputs.tag }}
+          name: ${{ needs.meta.outputs.tag }}
+          target_commitish: ${{ github.event.pull_request.merge_commit_sha }}
           body_path: CHANGELOG.md
+          prerelease: ${{ needs.meta.outputs.prerelease != 'false' }}
           files: ${{ env.ZIP }}
