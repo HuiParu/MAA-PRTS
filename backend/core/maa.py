@@ -183,6 +183,9 @@ def apply_plan(items, profile=None, mode='replace', auto_start=True, tid=None):
         stage_code = it.get('stageCode') or str(cid)
         log('[%d/%d] 下载作业 #%s %s' % (idx, len(items), cid, it.get('title') or ''))
         content = copilot.download_content(cid)
+        content, notes = copilot.normalize_for_maa(content)
+        for n in notes:
+            log('    修正：%s' % n)
         fname = '%s_%s.json' % (_safe(stage_code), cid)
         os.makedirs(_copilot_dir(), exist_ok=True)
         fpath = os.path.join(_copilot_dir(), fname)
