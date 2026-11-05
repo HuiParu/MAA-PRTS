@@ -120,6 +120,13 @@ jobs:
             else
               git log --no-merges --pretty=format:'- %h %s'
             fi
+            # 与历史发布包一致，附压缩包校验值
+            echo
+            echo "## 校验"
+            echo
+            echo '```'
+            echo "SHA256 ($ZIP) = $(sha256sum "$ZIP" | cut -d' ' -f1)"
+            echo '```'
           } > CHANGELOG.md
           cat CHANGELOG.md
 
