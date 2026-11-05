@@ -9,7 +9,6 @@ import urllib.parse
 
 from . import accounts, copilot, maa, paradox, resources, settings, sklogin, tasks, version
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = settings.static_dir()
 
 MIME = {

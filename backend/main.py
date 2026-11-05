@@ -301,6 +301,12 @@ def _quit(code=0, reason='退出'):
 
 
 def main():
+    if not os.path.isdir(WEB):
+        print('[错误] 未找到页面目录：%s' % WEB)
+        print('       程序在哪个目录运行就用哪个目录的资源——源码运行请在项目根')
+        print('       目录启动（双击 启动.bat）；打包运行请保持 exe 与 _internal 同级。')
+        return 1
+
     no_window = '--no-window' in sys.argv
     debug = '--debug' in sys.argv
     port = find_port()
@@ -312,7 +318,7 @@ def main():
     accounts.ensure_tokens()
     log('=' * 56)
     log('MAA-PRTS %s  界面 %s' % (version.APP_VERSION, url))
-    log('项目目录  %s' % settings.project_root())
+    log('运行目录  %s' % settings.project_root())
     log('账号数据  %s' % settings.skland_dir())
     log('配置文件  %s' % settings.SETTINGS_PATH)
     log('日志文件  %s' % settings.LOG_PATH)
