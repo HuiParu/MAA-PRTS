@@ -14,14 +14,15 @@ zonai.skland.com 的请求头里的 token（就是「怎么拿 token」教用户
 """
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
+import urllib.parse
 
 from . import skland
 
 LOGIN_URL = 'https://www.skland.com/'
-SNIFF_FILTER = 'https://*.skland.com/*'
 
 # phase: idle → opening → waiting ⇄ verifying → done / failed / closed
 _lock = threading.Lock()
@@ -31,13 +32,22 @@ _closed = [False]           # 登录窗已关闭（用户手动关或抓完自�
 _cand_lock = threading.Lock()
 _candidates = []            # 抓到的候选 token，等 watch 线程逐个验证
 _seen = set()
+_debug = {'requests': 0, 'urls': [], 'header_names': set(), 'scan': []}   # 诊断：嗅探到了什么
 
 WATCH_TIMEOUT = 15 * 60     # 用户慢悠悠登录也够用，超时强制收摊
 
 
 def status():
     with _lock:
-        return _status_locked()
+        d = _status_locked()
+    with _cand_lock:
+        d['debug'] = {
+            'requests': _debug['requests'],
+            'urls': list(_debug['urls']),
+            'scan': list(_debug['scan']),
+            'headerNames': sorted(_debug['header_names']),
+        }
+    return d
 
 
 def _status_locked():
@@ -62,9 +72,11 @@ def start():
         return _fail('当前不是桌面窗口模式，请手动粘贴 token')
 
     _closed[0] = False
+    _reset_done[0] = False
     with _cand_lock:
         _candidates.clear()
         _seen.clear()
+        _debug.update(requests=0, urls=[], header_names=set(), scan=[])
     try:
         from System.Threading import Thread, ThreadStart, ApartmentState
         t = Thread(ThreadStart(_thread_main))
@@ -110,7 +122,6 @@ def _thread_main():
         form.Controls.Add(wv)
 
         wv.CoreWebView2InitializationCompleted += _on_ready
-        wv.NavigationCompleted += _on_nav_done
         form.FormClosed += _on_form_closed
         _win[0] = {'form': form, 'wv': wv}
         WinForms.Application.Run(form)
@@ -132,9 +143,13 @@ def _on_ready(sender, args):
             _close_window()
             return
         cwv = sender.CoreWebView2
-        from Microsoft.Web.WebView2.Core import CoreWebView2WebResourceContext
-        cwv.AddWebResourceRequestedFilter(SNIFF_FILTER, CoreWebView2WebResourceContext.All)
-        cwv.WebResourceRequested += _on_request
+        _win[0]['cwv'] = cwv
+        # 嗅探走 CDP 网络域（MaaEnd 同款）：WebResourceRequested 在这套
+        # pythonnet + WebView2 组合下连 '*' 全拦都不触发（实测），放弃之
+        recv = cwv.GetDevToolsProtocolEventReceiver('Network.requestWillBeSent')
+        recv.DevToolsProtocolEventReceived += _on_cdp_request
+        cwv.CallDevToolsProtocolMethodAsync('Network.enable', '{}')
+        cwv.NavigationCompleted += _on_nav_done   # 控件层同名事件不触发，挂这层
         sender.ZoomFactor = 1.25              # 页面内容跟着窗口一起放大
         with _lock:
             if _state['phase'] == 'opening':
@@ -145,12 +160,200 @@ def _on_ready(sender, args):
 
 
 def _on_nav_done(_sender, args):
-    """首页打开失败（断网/DNS）时给个明确提示，别让用户干等"""
+    """首页打开失败给个提示；首次打开先清登录态强制走完整登录流程"""
     try:
         if not args.IsSuccess:
             with _lock:
                 if _state['phase'] in ('opening', 'waiting'):
                     _state['error'] = '页面没加载出来（网络问题？），检查后可在小窗里按 F5 刷新'
+            return
+        if not _reset_done[0]:
+            _reset_done[0] = True
+            _reset_login_state()
+            return
+        _scan_storage()
+    except Exception:
+        pass
+
+
+_reset_done = [False]
+
+
+def _reset_login_state():
+    """清掉小窗里的 skland 登录态（cookie + 存储）并重载。
+
+    页面只在登录流程中短暂持有鹰角通行证 token（换完 cred 就丢），已登录
+    的页面只会发 cred 签名请求——不清登录态就永远等不到 token。
+    """
+    try:
+        win = _win[0] or {}
+        cwv, wv = win.get('cwv'), win.get('wv')
+        if not cwv or not wv:
+            return
+        from System import Action, String
+        from System.Threading.Tasks import Task
+
+        def _after_clear(_t):
+            try:
+                from System import Func, Object
+
+                def _nav():
+                    cwv.Navigate(LOGIN_URL)  # 清完再重载，这次是未登录页面
+                    return True
+
+                # ContinueWith 的回调在线程池，Navigate 必须回 UI 线程
+                wv.Invoke(Func[Object](_nav))
+                _note_scan('RESET-AND-RELOAD')
+            except Exception as e:
+                _note_scan('RESET-NAV-EXC %s' % str(e)[:120])
+
+        cwv.CookieManager.DeleteAllCookies()
+        wv.ExecuteScriptAsync('localStorage.clear();sessionStorage.clear()').ContinueWith(
+            Action[Task[String]](_after_clear))
+        _note_scan('RESET-CLEAR')
+    except Exception as e:
+        _note_scan('RESET-EXC %s' % e)
+
+
+# ---------------------------------------------------------------- 读页面存储
+_scan_at = [0.0]     # 上次扫描时刻（节流）
+
+_SCAN_JS = (
+    'JSON.stringify((()=>{'
+    'const o={ls:{}};'
+    "for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);o.ls[k]=localStorage.getItem(k)}"
+    'return o})())'
+)
+
+
+def _note_scan(msg):
+    with _cand_lock:
+        if len(_debug['scan']) < 60:
+            _debug['scan'].append(msg)
+
+
+def _scan_storage():
+    """读页面存储与 cookie 找 token（UI 线程调用）
+
+    网页端 API 只带签名后的 cred 头、不带鹰角通行证 token 头（实测），
+    token 在页面存储里，ExecuteScriptAsync 读出来再验证即可。
+    CDP Runtime.evaluate 的自定义委托 pythonnet 包不了（试过多种姿势），
+    ExecuteScriptAsync + ContinueWith（内置泛型 Action）是 pywebview 验证过的模式。
+    """
+    try:
+        now = time.time()
+        if now - _scan_at[0] < 8:          # 节流
+            return
+        _scan_at[0] = now
+        wv = (_win[0] or {}).get('wv')
+        if not wv:
+            return
+        from System import Action, String
+        from System.Threading.Tasks import Task
+
+        def _cb(t):
+            try:
+                _on_storage_result(str(t.Result))
+            except Exception as e:
+                _note_scan('SCAN-CB-EXC %s' % e)
+
+        _note_scan('SCAN-RUN')
+        wv.ExecuteScriptAsync(_SCAN_JS).ContinueWith(Action[Task[String]](_cb))
+    except Exception as e:
+        _note_scan('SCAN-EXC %s' % e)
+
+
+def _offer(value):
+    """把像 token 的值塞进候选队列（真伪由 watch 线程的 grant 验证兜底）"""
+    try:
+        if not isinstance(value, str) or len(value) <= 20 or ' ' in value:
+            return
+        with _cand_lock:
+            if value not in _seen:
+                _seen.add(value)
+                _candidates.append(value)
+    except Exception:
+        pass
+
+
+def _offer_json_values(text):
+    """SK_OAUTH_CRED_ 之类 key 的 value 本身是一段 JSON，token 藏在里面"""
+    try:
+        data = json.loads(text)
+    except Exception:
+        return
+    if isinstance(data, dict):
+        for k, v in data.items():
+            if k.lower() == 'token':
+                _offer(v)          # token 字段优先排队
+        for k, v in data.items():
+            if k.lower() != 'token':
+                _offer(v)
+
+
+def _on_storage_result(raw):
+    """ExecuteScriptAsync 回调：结果是 JS 返回值的 JSON 编码（字符串再包一层引号）"""
+    try:
+        if not raw or raw == 'null':
+            _note_scan('SCAN-CB empty（页面 JS 抛异常或还没就绪）')
+            return
+        val = json.loads(raw)
+        if not isinstance(val, str):
+            _note_scan('SCAN-CB not-str')
+            return
+        data = json.loads(val)
+        found = 0
+        for k, v in ((data.get('ls') or {})).items():
+            _note_scan('LS %s len=%s' % (k, len(v) if isinstance(v, str) else '?'))
+            _offer(v)
+            _offer_json_values(v)
+            found += 1
+        _note_scan('SCAN-CB %d keys' % found)
+    except Exception as e:
+        _note_scan('SCAN-PARSE-EXC %s' % e)
+
+
+def _on_cdp_request(_sender, args):
+    """CDP requestWillBeSent（UI 线程回调）：抄 token 请求头进候选队列"""
+    try:
+        # 本机这套 WebView2 SDK 的属性名叫 ParameterObjectAsJson（文档常见 ParametersAsJson）
+        raw = (getattr(args, 'ParameterObjectAsJson', None)
+               or getattr(args, 'ParametersAsJson', None) or '')
+        data = json.loads(str(raw)) if raw else {}
+        req = data.get('request') or {}
+        url = str(req.get('url') or '')
+        headers = req.get('headers') or {}
+        with _cand_lock:
+            _debug['requests'] += 1
+            if len(_debug['urls']) < 24:
+                _debug['urls'].append(url[:120])
+            _debug['header_names'].update(str(k) for k in headers)
+        tok = str(headers.get('token') or '')
+        if len(tok) > 20:
+            with _cand_lock:
+                if tok not in _seen:
+                    _seen.add(tok)
+                    _candidates.append(tok)
+        # 登录流程中页面会用鹰角通行证 token 去换 cred：POST body 里就有它
+        pd = req.get('postData')
+        if isinstance(pd, str) and 0 < len(pd) < 100000:
+            try:
+                body = json.loads(pd)
+            except Exception:
+                body = None
+            if isinstance(body, dict):
+                _note_scan('POST %s token? %s' % (
+                    url[:80], 'yes' if isinstance(body.get('token'), str) else 'no'))
+                _offer(body.get('token'))
+                _offer_json_values(pd)
+        # URL query 里带 token= 的也顺手收
+        if 'token=' in url:
+            for kv in url.split('?', 1)[-1].split('&'):
+                if kv.startswith('token='):
+                    _offer(urllib.parse.unquote(kv[6:]))
+        # 带签名 cred 头的请求 = 页面有登录态在活跃，顺手扫一遍存储
+        if 'cred' in headers:
+            _scan_storage()
     except Exception:
         pass
 
@@ -172,25 +375,6 @@ def _close_window():
         if form.IsHandleCreated and not form.IsDisposed:
             from System.Windows.Forms import MethodInvoker
             form.BeginInvoke(MethodInvoker(form.Close))
-    except Exception:
-        pass
-
-
-def _on_request(_sender, args):
-    """UI 线程回调，只做轻活：把 token 请求头抄进候选队列"""
-    try:
-        it = args.Request.Headers.Iterate()
-        tok = None
-        while it.MoveNext():
-            h = it.Current
-            if h.Key.lower() == 'token':
-                tok = h.Value
-                break
-        if tok and len(tok) > 20:
-            with _cand_lock:
-                if tok not in _seen:
-                    _seen.add(tok)
-                    _candidates.append(tok)
     except Exception:
         pass
 
