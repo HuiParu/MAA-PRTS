@@ -336,6 +336,96 @@ def check_copilot_variants():
     assert resources.resolve('act13side_ex01#f#')['stages'][0]['stageId'] == 'act13side_ex01'
 
 
+# ---------------------------------------------------------------- B12 v1 作业默认练度
+def check_copilot_v1_default_req():
+    """作业站 v1 老作业没有 requirements，练度要求未知。
+
+    规则：没写练度的条目按星级补默认要求——六星精二60 + 专三（skill_level 9）、
+    四五星精一60 + 技能7、三星精一55 + 技能7、一二星精零30 无技能。
+    配置不够的号要被判成「需补练度」，不能再当成「无特殊要求」放行。
+    详情里还要能看到补出来的默认值。
+    """
+    from core import copilot, resources
+
+    table = resources.char_table() or {}
+    by_stars = {}
+    for c in table.values():
+        if isinstance(c, dict) and c.get('name'):
+            by_stars.setdefault(int(c.get('rarity') or 0) + 1, c['name'])
+
+    def own(name, stars, elite, level, mastery=(0, 0, 0), main=7):
+        return {'name': name, 'rarity': stars, 'elite': elite, 'level': level,
+                'mainSkillLevel': main, 'masteryLevels': list(mastery), 'moduleLevels': {}}
+
+    # 每个星级：默认要求 dict，以及「满足 / 差一点」的两个账号样本
+    cases = [
+        # stars  默认要求                          满足样本                    不满足样本
+        (6, {'elite': 2, 'level': 60, 'skill_level': 9},
+            (2, 60, (3, 3, 3)), (2, 60, (0, 0, 0))),      # 专精不够 → 拦下
+        (5, {'elite': 1, 'level': 60, 'skill_level': 7},
+            (1, 60, (0, 0, 0), 7), (1, 60, (0, 0, 0), 6)),  # 技能 6 级 → 拦下
+        (4, {'elite': 1, 'level': 60, 'skill_level': 7},
+            (1, 60, (0, 0, 0), 7), (0, 55, (0, 0, 0), 7)),
+        (3, {'elite': 1, 'level': 55, 'skill_level': 7},
+            (1, 55, (0, 0, 0), 7), (1, 54, (0, 0, 0), 7)),
+        (2, {'elite': 0, 'level': 30},
+            (0, 30, (0, 0, 0), 0), (0, 29, (0, 0, 0), 0)),
+        (1, {'elite': 0, 'level': 30},
+            (0, 30, (0, 0, 0), 0), (0, 1, (0, 0, 0), 0)),
+    ]
+    for stars, want, ok_args, bad_args in cases:
+        name = by_stars.get(stars)
+        assert name, '资源包里找不到 %d 星干员，无法构造样本' % stars
+        op = {'name': name, 'skill': 1}          # v1 条目：没有 requirements
+        req = copilot.effective_req(op, stars)
+        for k, v in want.items():
+            assert req.get(k) == v, '%d 星默认要求 %s 应为 %r，实际 %r' % (stars, k, v, req.get(k))
+        assert req.get('implied') is True, '补出来的默认要求要带 implied 标记'
+        assert 'requirements' not in op, 'effective_req 不能往原条目里塞字段'
+        assert copilot.req_met(op, own(name, stars, *ok_args)), \
+            '%s %r 应满足默认要求' % (name, ok_args)
+        assert not copilot.req_met(op, own(name, stars, *bad_args)), \
+            '%s %r 不该被当成可用（v1 作业不是无要求）' % (name, bad_args)
+
+    # 专精检查认条目里的技能序号：skill=2 看第二技能的专精
+    op6 = {'name': by_stars[6], 'skill': 2}
+    assert not copilot.req_met(op6, own(by_stars[6], 6, 2, 60, mastery=(3, 0, 0))), \
+        '二技能没专精不该放行'
+    assert copilot.req_met(op6, own(by_stars[6], 6, 2, 60, mastery=(3, 3, 0)))
+
+    # 写了练度的 v2 条目不受默认值影响
+    op2 = {'name': by_stars[6], 'skill': 2, 'requirements': {'elite': 1, 'level': 1}}
+    assert copilot.effective_req(op2, 6)['elite'] == 1, '明确写了要求的不能被默认覆盖'
+    assert 'implied' not in copilot.effective_req(op2, 6)
+
+    # 压级号 vs v1 作业：六星精一（无专精）+ 五星精零 → mode 应为 train，不再是 ready
+    content = {'opers': [
+        {'name': by_stars[6], 'skill': 2},
+        {'name': by_stars[5], 'skill': 1},
+    ], 'groups': []}
+    owned_map = {
+        copilot.norm(by_stars[6]): own(by_stars[6], 6, 1, 60),
+        copilot.norm(by_stars[5]): own(by_stars[5], 5, 0, 40),
+    }
+    mode, missing, training, total, detail, _six = copilot.match_operation(content, owned_map)
+    assert not missing, '两个干员都拥有，不该判缺人'
+    assert mode == 'train', '压级号打 v1 作业应判需补练度，实际 %r' % mode
+    assert training == [by_stars[6], by_stars[5]], training
+    assert all(d['req'].get('implied') for d in detail), 'detail 里应带默认练度要求'
+
+    # 满练号（精二60 + 专三 / 精一60 + 技能7）打同一份 v1 作业：应为 ready
+    owned_map[copilot.norm(by_stars[6])] = own(by_stars[6], 6, 2, 60, mastery=(3, 3, 3))
+    owned_map[copilot.norm(by_stars[5])] = own(by_stars[5], 5, 1, 60, main=7)
+    mode, missing, training, total, detail, _six = copilot.match_operation(content, owned_map)
+    assert mode == 'ready' and not training, '满练号打 v1 作业不该被误伤'
+
+    # 详情弹窗用的 detail_opers：requirements 也要补上默认
+    dop = copilot.detail_opers(content)
+    assert dop[0]['requirements']['elite'] == 2 and dop[0]['requirements']['implied']
+    assert dop[0]['requirements']['skill_level'] == 9, '六星默认要带专三要求'
+    assert 'requirements' not in content['opers'][0], '展示副本不能污染原始 content'
+
+
 # ---------------------------------------------------------------- B10 悖论模拟
 def check_paradox_plan():
     """悖论清单：解锁条件只看对应干员的精英化/等级
@@ -490,6 +580,7 @@ def main():
         r.check('B9 突袭关拆普通/突袭两行', check_copilot_variants)
         r.check('B10 悖论清单与解锁推算', check_paradox_plan)
         r.check('B11 悖论写 MAA 的命名', check_maa_paradox_name)
+        r.check('B12 v1 作业默认练度（压级号不再误推）', check_copilot_v1_default_req)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

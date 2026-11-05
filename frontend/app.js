@@ -622,10 +622,17 @@ function opChips(op, max = 8) {
 
 function chipTitle(o) {
   if (o.group) return '组合：满足任一即可';
-  if (!o.owned) return '未拥有';
   const e = ['精零', '精一', '精二'][o.elite] || '';
   const m = (o.mastery || []).map((x, i) => x ? `专${'一二三'[i] || ''}${x}` : '').filter(Boolean).join(' ');
-  return `${e} ${o.level} 级${m ? ' · ' + m : ''}`;
+  // 练度要求（v1 老作业没写的会补默认值，带 implied 标记）
+  const req = o.req || {};
+  const need = [];
+  if (req.elite != null) need.push('精' + req.elite);
+  if (req.level != null) need.push(req.level + '级');
+  if (req.implied) need.push('默认');
+  const needTxt = need.length ? ` · 要求 ${need.join(' ')}` : '';
+  if (!o.owned) return '未拥有' + needTxt;
+  return `${e} ${o.level} 级${m ? ' · ' + m : ''}${needTxt}`;
 }
 
 /* 浏览量展示：过万缩写成 x.x万 */
@@ -870,6 +877,7 @@ async function showOpDetail(op) {
           if (req.level != null) bits.push(req.level + ' 级');
           if (req.skill_level != null) bits.push(req.skill_level >= 8 ? ('专' + (req.skill_level - 7) + ' 技能' + (req.skill || 1)) : ('技能 ' + req.skill_level));
           if (req.module) bits.push('模组 ' + req.module);
+          if (req.implied) bits.push('老作业未标注，按星级默认');
           return `<div style="display:flex;justify-content:space-between;gap:12px;border-bottom:1px dashed rgba(255,255,255,.06);padding:5px 0">
             <span style="color:var(--text)">${esc(o.name)}</span>
             <span style="color:var(--text-3);font-size:11.5px">${esc(bits.join(' · ') || '无特殊要求')}</span>

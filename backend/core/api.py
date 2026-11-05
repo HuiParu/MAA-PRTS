@@ -144,7 +144,7 @@ def api_op(q, _body):
         'content': content,
         'maaCode': 'maa://%s' % cid,
         'title': (content.get('doc') or {}).get('title'),
-        'opers': content.get('opers') or [],
+        'opers': copilot.detail_opers(content),
         'actions': len(content.get('actions') or []),
         'stageName': content.get('stage_name'),
     }

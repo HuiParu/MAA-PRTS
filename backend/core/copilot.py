@@ -31,6 +31,24 @@ MODE_CN = {'ready': '可直接抄', 'borrow': '差一人可借', 'train': '需�
 # 干员数低于这个值按萌新号对待：推荐排序里优先单核作业
 NEWBIE_OWNED = 250
 
+# 作业站 v1 老作业的 opers 没有 requirements，练度要求完全未知——当时的默认
+# 假设就是「练度拉满」。压级号照这种判定会直接被打不了，所以没写练度的条目
+# 按星级补一个保守默认要求（用户定的规则）：
+#   六星精二 60 级 + 技能专三（skill_level 9）
+#   五星/四星精一 60 级 + 技能 7 级
+#   三星精一 55 级 + 技能 7 级
+#   一星/二星精零 30 级，无技能要求
+# 配置不够的号会被判成「需补练度」，再由 _collect_rows 的 pass 规则滤掉。
+# skill_level 沿用作业站语义：>= 8 看对应技能的专精（9 = 专三），1~7 看技能等级。
+DEFAULT_REQ = {
+    6: {'elite': 2, 'level': 60, 'skill_level': 9},
+    5: {'elite': 1, 'level': 60, 'skill_level': 7},
+    4: {'elite': 1, 'level': 60, 'skill_level': 7},
+    3: {'elite': 1, 'level': 55, 'skill_level': 7},
+    2: {'elite': 0, 'level': 30},
+    1: {'elite': 0, 'level': 30},
+}
+
 # 作业里的 difficulty 字段是位标志（MAA CopilotModel.DifficultyFlags）：
 #   0/缺失 = 未标注（MAA 按普通处理）、1 = 普通、2 = 突袭、3 = 普通与突袭兼容
 DIFF_NORMAL, DIFF_RAID = 1, 2
@@ -123,12 +141,23 @@ def infer_elite(rarity, level, elite):
     return e
 
 
+def effective_req(op, rarity):
+    """作业条目的实际练度要求。
+
+    v1 老作业没写 requirements（或只写了技能/模组没写练度）时，按星级补默认
+    （练度 + 技能等级，见 DEFAULT_REQ）：返回的 dict 带 `implied: True` 标记，
+    前端据此显示「默认」而不是当成作者标注。
+    """
+    r = op.get('requirements') or {}
+    if r.get('elite') is None and r.get('level') is None:
+        r = dict(r, **DEFAULT_REQ.get(int(rarity or 6), DEFAULT_REQ[6]), implied=True)
+    return r
+
+
 def req_met(req, owned):
     """req 是作业里的干员条目，requirements 是它的练度要求。
     注意：技能序号 `skill` 在条目顶层，不在 requirements 里。"""
-    r = req.get('requirements') or {}
-    if not r:
-        return True
+    r = effective_req(req, owned.get('rarity'))
     elite, level = r.get('elite'), r.get('level')
     if elite is not None or level is not None:
         rl = int(level or 1)
@@ -181,6 +210,9 @@ def match_operation(content, owned_map):
             training.append(op.get('name'))
         if rmap.get(name) == 6:
             six += 1
+        # v1 作业没写练度：detail 里也补上默认要求（带 implied 标记），让前端
+        # 能解释「为什么判需补练度」，而不是一脸懵地显示「无特殊要求」
+        req = effective_req(op, owned['rarity'] if owned else rmap.get(name))
         detail.append({
             'name': op.get('name'),
             'owned': bool(owned),
@@ -188,7 +220,7 @@ def match_operation(content, owned_map):
             'elite': owned['elite'] if owned else None,
             'level': owned['level'] if owned else None,
             'mastery': owned['masteryLevels'] if owned else [],
-            'req': (op.get('requirements') or {}),
+            'req': req,
             'skill': op.get('skill'),
         })
 
@@ -485,6 +517,20 @@ def download_content(copilot_id):
     if not c.get('stage_name'):
         raise ValueError('作业 #%s 内容不完整' % copilot_id)
     return c
+
+
+def detail_opers(content):
+    """详情弹窗用的干员列表：没写练度的按星级补默认要求（带 implied 标记）。
+
+    注意这是展示用的副本，不往写 MAA 的那份 content 里塞字段。"""
+    idx = _char_index()
+    out = []
+    for op in content.get('opers') or []:
+        o = dict(op)
+        stars = (idx.get(o.get('name') or '') or (6,))[0]
+        o['requirements'] = effective_req(op, stars)
+        out.append(o)
+    return out
 
 
 # ---------------------------------------------------------------- 交给 MAA 前修正
