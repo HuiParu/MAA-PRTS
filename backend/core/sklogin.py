@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
-"""森空岛内置登录：独立小窗 + WebView2 网络事件嗅探 token。
+"""森空岛内置登录：独立小窗 + WebView2 + CDP 网络嗅探抓 token。
 
 思路抄自 MaaEnd 的 ZiplineImport：内嵌 WebView2 打开官方页面，旁路抄
-网络数据而不碰凭据——那边抄的是响应体，这边抄的是发往
-zonai.skland.com 的请求头里的 token（就是「怎么拿 token」教用户 F12
-手抓的那个头）。抓到后先走一遍 grant 接口验证有效，再关窗回填表单。
+网络数据。实测下来网页只在登录瞬间短暂持有鹰角通行证 token（拿去换
+cred 用完即弃），已登录的页面只发 cred 签名请求，localStorage 里存的
+也是 32 位 cred——所以每次开窗都先清掉小窗里的登录态、逼出完整登录
+流程，再从登录请求体里把 token 抄出来，grant 接口验证有效后自动关窗
+回填表单。
 
 登录窗不交给 pywebview 管：它运行时 create_window 的子窗口路径会把
 构造 Invoke 到主窗口 UI 线程，pythonnet 下两边互等 GIL，整个进程假死
 （实测过）。这里自己起一个 STA 线程直接摆 WinForms Form + WebView2，
-和主窗口互不相干；UserDataFolder 也单独放一个目录，登录态跨会话保留
-（登录过一次，下次打开直接是已登录状态，秒拿 token）。
+和主窗口互不相干；UserDataFolder 也单独放一个目录，避免和主窗口的
+WebView2 environment 冲突。
 """
 from __future__ import annotations
 
@@ -27,27 +29,20 @@ LOGIN_URL = 'https://www.skland.com/'
 # phase: idle → opening → waiting ⇄ verifying → done / failed / closed
 _lock = threading.Lock()
 _state = {'phase': 'idle', 'error': '', 'token': ''}
-_win = [None]               # {'form': .NET Form, 'wv': .NET WebView2}
+_win = [None]               # {'form': .NET Form, 'wv': .NET WebView2, 'cwv': CoreWebView2}
 _closed = [False]           # 登录窗已关闭（用户手动关或抓完自动关）
+_gen = [0]                   # 登录会话代：取消后立刻重开时，旧窗口/旧 watch 靠它退场
 _cand_lock = threading.Lock()
 _candidates = []            # 抓到的候选 token，等 watch 线程逐个验证
 _seen = set()
-_debug = {'requests': 0, 'urls': [], 'header_names': set(), 'scan': []}   # 诊断：嗅探到了什么
+_debug = {'requests': 0, 'urls': [], 'header_names': set(), 'scan': []}   # 诊断轨迹，只在内存，不外发给前端
 
 WATCH_TIMEOUT = 15 * 60     # 用户慢悠悠登录也够用，超时强制收摊
 
 
 def status():
     with _lock:
-        d = _status_locked()
-    with _cand_lock:
-        d['debug'] = {
-            'requests': _debug['requests'],
-            'urls': list(_debug['urls']),
-            'scan': list(_debug['scan']),
-            'headerNames': sorted(_debug['header_names']),
-        }
-    return d
+        return _status_locked()
 
 
 def _status_locked():
@@ -73,24 +68,28 @@ def start():
 
     _closed[0] = False
     _reset_done[0] = False
+    _gen[0] += 1
+    mygen = _gen[0]
     with _cand_lock:
         _candidates.clear()
         _seen.clear()
         _debug.update(requests=0, urls=[], header_names=set(), scan=[])
     try:
         from System.Threading import Thread, ThreadStart, ApartmentState
-        t = Thread(ThreadStart(_thread_main))
+        t = Thread(ThreadStart(lambda: _thread_main(mygen)))
         t.SetApartmentState(ApartmentState.STA)
         t.IsBackground = True
         t.Start()
     except Exception as e:
         return _fail('打不开登录窗口：%s' % e)
-    threading.Thread(target=_watch, daemon=True, name='skland-login').start()
+    threading.Thread(target=_watch, args=(mygen,), daemon=True,
+                     name='skland-login').start()
     return status()
 
 
 def cancel():
     _close_window()
+    _gen[0] += 1                 # 旧 watch 立即退场，别去消费下一轮的候选
     with _lock:
         if _state['phase'] != 'done':
             _state.update(phase='idle', error='')
@@ -98,8 +97,9 @@ def cancel():
 
 
 # ---------------------------------------------------------------- 登录窗线程
-def _thread_main():
+def _thread_main(mygen):
     """登录小窗自己的 STA 线程：摆 Form + WebView2，泵消息直到关窗"""
+    mywin = None
     try:
         import System.Windows.Forms as WinForms
         from System import Uri
@@ -123,16 +123,20 @@ def _thread_main():
 
         wv.CoreWebView2InitializationCompleted += _on_ready
         form.FormClosed += _on_form_closed
-        _win[0] = {'form': form, 'wv': wv}
+        mywin = {'form': form, 'wv': wv}
+        _win[0] = mywin
         WinForms.Application.Run(form)
     except Exception as e:
         _fail('登录窗口出错：%s' % e)
     finally:
-        _win[0] = None
-        _closed[0] = True
-        with _lock:
-            if _state['phase'] in ('opening', 'waiting', 'verifying'):
-                _state['phase'] = 'closed'
+        # 只有自己还是当前一代时才动全局状态，免得误杀新一轮登录
+        if mygen == _gen[0]:
+            if _win[0] is mywin:
+                _win[0] = None
+            _closed[0] = True
+            with _lock:
+                if _state['phase'] in ('opening', 'waiting', 'verifying'):
+                    _state['phase'] = 'closed'
 
 
 def _on_ready(sender, args):
@@ -241,6 +245,8 @@ def _scan_storage():
     ExecuteScriptAsync + ContinueWith（内置泛型 Action）是 pywebview 验证过的模式。
     """
     try:
+        if not _reset_done[0]:
+            return          # 清登录态之前扫到的都是旧 cred，白验
         now = time.time()
         if now - _scan_at[0] < 8:          # 节流
             return
@@ -263,21 +269,32 @@ def _scan_storage():
         _note_scan('SCAN-EXC %s' % e)
 
 
-def _offer(value):
-    """把像 token 的值塞进候选队列（真伪由 watch 线程的 grant 验证兜底）"""
+def _offer(value, first=False):
+    """把像 token 的值塞进候选队列（真伪由 watch 线程的 grant 验证兜底）。
+
+    first=True 插队：token 字段出身的候选优先验证，别排在 localStorage
+    里一堆设备指纹后面干等。清登录态（_reset_done）之前的候选都是旧
+    登录态的残留 cred，直接丢。
+    """
     try:
+        if not _reset_done[0]:
+            return
         if not isinstance(value, str) or len(value) <= 20 or ' ' in value:
             return
         with _cand_lock:
             if value not in _seen:
                 _seen.add(value)
-                _candidates.append(value)
+                if first:
+                    _candidates.insert(0, value)
+                else:
+                    _candidates.append(value)
     except Exception:
         pass
 
 
 def _offer_json_values(text):
-    """SK_OAUTH_CRED_ 之类 key 的 value 本身是一段 JSON，token 藏在里面"""
+    """请求体/存储值本身是 JSON 时，只取 token 字段——全量收会把设备指纹
+    payload 里一堆长字符串当候选，白打一堆验证请求"""
     try:
         data = json.loads(text)
     except Exception:
@@ -285,10 +302,7 @@ def _offer_json_values(text):
     if isinstance(data, dict):
         for k, v in data.items():
             if k.lower() == 'token':
-                _offer(v)          # token 字段优先排队
-        for k, v in data.items():
-            if k.lower() != 'token':
-                _offer(v)
+                _offer(v, first=True)   # token 字段插队优先验证
 
 
 def _on_storage_result(raw):
@@ -305,8 +319,9 @@ def _on_storage_result(raw):
         found = 0
         for k, v in ((data.get('ls') or {})).items():
             _note_scan('LS %s len=%s' % (k, len(v) if isinstance(v, str) else '?'))
-            _offer(v)
-            _offer_json_values(v)
+            if 'token' in str(k).lower():
+                _offer(v, first=True)      # key 名带 token 的直投
+            _offer_json_values(v)          # 其他的只认 JSON 内层的 token 字段
             found += 1
         _note_scan('SCAN-CB %d keys' % found)
     except Exception as e:
@@ -330,10 +345,7 @@ def _on_cdp_request(_sender, args):
             _debug['header_names'].update(str(k) for k in headers)
         tok = str(headers.get('token') or '')
         if len(tok) > 20:
-            with _cand_lock:
-                if tok not in _seen:
-                    _seen.add(tok)
-                    _candidates.append(tok)
+            _offer(tok, first=True)
         # 登录流程中页面会用鹰角通行证 token 去换 cred：POST body 里就有它
         pd = req.get('postData')
         if isinstance(pd, str) and 0 < len(pd) < 100000:
@@ -344,13 +356,13 @@ def _on_cdp_request(_sender, args):
             if isinstance(body, dict):
                 _note_scan('POST %s token? %s' % (
                     url[:80], 'yes' if isinstance(body.get('token'), str) else 'no'))
-                _offer(body.get('token'))
+                _offer(body.get('token'), first=True)
                 _offer_json_values(pd)
         # URL query 里带 token= 的也顺手收
         if 'token=' in url:
             for kv in url.split('?', 1)[-1].split('&'):
                 if kv.startswith('token='):
-                    _offer(urllib.parse.unquote(kv[6:]))
+                    _offer(urllib.parse.unquote(kv[6:]), first=True)
         # 带签名 cred 头的请求 = 页面有登录态在活跃，顺手扫一遍存储
         if 'cred' in headers:
             _scan_storage()
@@ -358,7 +370,10 @@ def _on_cdp_request(_sender, args):
         pass
 
 
-def _on_form_closed(*_a):
+def _on_form_closed(sender, _args=None):
+    win = _win[0]
+    if win and win.get('form') is not sender:
+        return          # 关的是上一代的窗口，别动这一轮的状态
     _closed[0] = True
     with _lock:
         if _state['phase'] in ('opening', 'waiting', 'verifying'):
@@ -380,10 +395,12 @@ def _close_window():
 
 
 # ---------------------------------------------------------------- 验证
-def _watch():
+def _watch(mygen):
     """守着候选队列：来了就用 grant 接口验证，有效即关窗收工"""
     deadline = time.time() + WATCH_TIMEOUT
     while time.time() < deadline:
+        if mygen != _gen[0]:
+            return                  # 被新一轮登录取代，安静退场
         cand = None
         with _cand_lock:
             if _candidates:
@@ -403,8 +420,9 @@ def _watch():
             return
         # 多半是页面里残留的过期 token：丢掉继续等用户登录后的新请求
         _set_phase('waiting', err)
-    _set_phase('failed', '等太久了先收摊，也可以直接手动粘贴 token')
-    _close_window()
+    if mygen == _gen[0]:
+        _set_phase('failed', '等太久了先收摊，也可以直接手动粘贴 token')
+        _close_window()
 
 
 def _verify(token):

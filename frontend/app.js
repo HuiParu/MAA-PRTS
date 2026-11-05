@@ -1256,7 +1256,7 @@ function openOnboarding() {
                 </div>
                 <button class="btn-solid mini" id="onb-login-btn">打开登录窗口</button>
               </div>
-              <div class="onb-hint" id="onb-login-state">在小窗里登录过一次的话，下次会直接带着登录态，秒拿 token。</div>
+              <div class="onb-hint" id="onb-login-state">小窗会要求重新登录一次森空岛——token 只在登录的瞬间出现，抓到就自动验证并填到下方。</div>
             </div>
             <div class="onb-manual">
               <h4>自行输入森空岛 token</h4>
