@@ -38,6 +38,7 @@ MAA-PRTS\
 | 作业集 | 单关挑一份，或活动每关自动挑最佳；支持复制 `maa://` 代码 |
 | 拖动排序 | 作业集里的作业可以拖动换顺序，顺序就是写进 MAA 的执行顺序 |
 | 写入 MAA | 关 MAA → 备份配置（只留最近 2 份）→ 下载作业 → 写 `TaskList` → 重启 MAA，全程日志可见 |
+| 悖论模拟 | 「快捷」行的 `悖论模拟` 入口：按账号练度算出哪些干员能开打，勾选后自动取作业加进作业集；导入过的会记住，下次默认不勾 |
 | 窄屏适配 | 窗口较窄时作业集收成右侧抽屉，右下角浮动按钮开关，竖屏笔记本也能用 |
 | 资源版本 | 资源包带版本号和指纹，更新后首次启动会提示新增干员/关卡与活动 |
 | 完全离线 | 关卡表、干员表内置在 `resources/arknights.json`，只有搜作业和同步账号需要联网 |
@@ -157,6 +158,20 @@ python resources\make_pack.py --excel "D:\ArknightsGameResource\gamedata\excel"
 
 同时新活动会被顶到快捷栏最前面并标上 `NEW`。提示条点「知道了」才消失，
 不点就每次启动都提醒一次。详见 `resources\README.md`、`backend\README.md`。
+
+---
+
+## 更新悖论模拟清单
+
+悖论清单在 `resources\paradox.json`（哪个干员有悖论、关卡代号、解锁条件）。
+新干员开了悖论之后要重新生成一次，否则面板里看不到：
+
+```bat
+python tools\build_paradox_data.py --src "E:\.github-ARK\ArknightsGameResource"
+```
+
+只需要资源库里的两个 json，不用任何图片。步骤与校验点见
+`E:\project\MAA-PRTS-版本更新\悖论模拟数据更新.md`（同目录还有一个一键 bat）。
 
 ---
 

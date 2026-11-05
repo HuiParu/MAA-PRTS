@@ -207,7 +207,9 @@ def apply_plan(items, profile=None, mode='replace', auto_start=True, tid=None):
         raids = copilot.entry_variants(flags, it.get('variant'))
         for is_raid in raids:
             new_entries.append({
-                'Name': stage_code,
+                # Name 只是 MAA 列表里的标签，用可读的名字（悖论关卡就是「悖论·仇白」），
+                # 没给名字的仍然退回关卡代号
+                'Name': it.get('name') or stage_code,
                 'IsNavNameOverride': False,
                 'FilePath': 'config\\copilot\\' + fname,
                 'CopilotId': cid,

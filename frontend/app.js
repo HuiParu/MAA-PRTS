@@ -8,6 +8,7 @@ const S = {
   maa: {}, activities: [],
   basket: [], result: null, searching: false, appInfo: null,
   paths: {}, pack: {}, setup: {}, gamedata: {}, onboarded: false,
+  paradoxPending: [],
 };
 
 const $ = (sel, root) => (root || document).querySelector(sel);
@@ -178,6 +179,7 @@ async function selectAccount(file, silent) {
     const d = await api('/api/account?file=' + encodeURIComponent(file));
     S.detail = d;
     renderHero();
+    updateParadoxChip();
     await api('/api/settings', { lastAccount: file });
     S.settings.lastAccount = file;
     if (!silent) {
@@ -340,7 +342,7 @@ function renderQuick() {
   // 这里不再按编号重排，否则一堆 NEW 会把当前活动挤到滚动区外面去。
   const acts = (S.activities || []);
 
-  let html = '<span class="quick-label">快捷</span>';
+  let html = '<span class="quick-label">快捷</span>' + paradoxChip();
   acts.slice(0, 12).forEach(a => {
     const isNew = news.indexOf(a.id) >= 0;
     html += `<button class="chip${isNew ? ' is-new' : ''}" data-q="${esc(a.id)}"
@@ -351,10 +353,210 @@ function renderQuick() {
     </button>`;
   });
   row.innerHTML = html;
-  $$('#quick-row .chip').forEach(c => c.addEventListener('click', () => {
+  $$('#quick-row .chip[data-q]').forEach(c => c.addEventListener('click', () => {
     $('#search-input').value = c.dataset.q;
     doSearch();
   }));
+  const px = $('#chip-paradox');
+  if (px) px.addEventListener('click', openParadox);
+}
+
+/* ------------------------------------------------------------ 悖论模拟
+   入口沿用「快捷」这一行：它本来就是「按活动直接搜」，悖论是同一类入口，
+   放这里不用新增侧栏/顶栏元素，界面不会有异物感。
+   数字角标 = 练度够开打、且没导入过的数量。 */
+function paradoxChip() {
+  const st = (S.detail && S.detail.paradox) || null;
+  const todo = st ? (st.todo || 0) : 0;
+  const tip = st
+    ? `可开打 ${st.ready} 个，其中 ${todo} 个还没导入过 —— 点开按练度推算的清单`
+    : '按当前账号练度推算哪些悖论模拟能开打，一键加进作业集';
+  return `<button class="chip paradox" id="chip-paradox" title="${esc(tip)}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="5"/>
+      </svg>
+      <span class="chip-name">悖论模拟</span>
+      ${todo ? `<i class="px-badge">${todo}</i>` : ''}
+    </button>`;
+}
+
+function updateParadoxChip() {
+  const cur = $('#chip-paradox');
+  if (!cur) { renderQuick(); return; }
+  const wrap = document.createElement('div');
+  wrap.innerHTML = paradoxChip();
+  cur.replaceWith(wrap.firstElementChild);
+  $('#chip-paradox').addEventListener('click', openParadox);
+}
+
+function pxEliteText(need) {
+  return { 0: '无需精英化', 1: '精一', 2: '精二' }[need] || ('精英化 ' + need);
+}
+
+async function openParadox() {
+  if (!S.current) { toast('先选一个账号', 'warn'); openAddAccount(); return; }
+  const m = modal(`
+    <h3>悖论模拟</h3>
+    <div class="sub">按你的练度算出哪些悖论能开打，勾选想打的（默认不勾），加入后自动去作业站取作业。
+      解锁条件只看对应干员的精英化，关卡内是官方固定阵容。</div>
+    <div id="px-body"><div class="loading-row"><span class="spinner"></span>正在按练度推算…</div></div>`);
+  m.el.querySelector('.modal').classList.add('modal-wide');
+  try {
+    const d = await api('/api/paradox/plan', { file: S.current });
+    renderParadoxPanel(m.el, d, m.close);
+  } catch (e) {
+    $('#px-body', m.el).innerHTML = `<div class="empty-state"><h3>读取失败</h3><p>${esc(e.message)}</p></div>`;
+  }
+}
+
+function renderParadoxPanel(root, d, close) {
+  const items = d.items || [], st = d.stats || {};
+  const body = $('#px-body', root);
+  if (!items.length) {
+    body.innerHTML = '<div class="empty-state"><h3>这个账号还没有可开打的悖论</h3>'
+      + '<p>悖论模拟需要先把干员精英化：三星精一、四星以上精二。</p></div>';
+    return;
+  }
+
+  const ver = (d.table && d.table.gameVersion) ? String(d.table.gameVersion).slice(0, 8) : '';
+  body.innerHTML = `
+    <div class="px-stats">
+      <span><b>${st.ready}</b> 可开打</span>
+      <span><b class="mint">${st.todo}</b> 未导入</span>
+      <span><b>${st.locked}</b> 练度不够</span>
+      <span><b>${st.notOwned}</b> 未拥有</span>
+      ${ver ? `<em class="px-ver">数据 ${esc(ver)}</em>` : ''}
+    </div>
+    <div class="px-tools">
+      <input type="text" id="px-q" placeholder="搜干员名 / 悖论名 / mem 代号">
+      <label class="px-check"><input type="checkbox" id="px-only-todo" checked><span>只看未导入</span></label>
+      <button class="btn-plain mini" id="px-all">全选</button>
+      <button class="btn-plain mini" id="px-none">清空</button>
+    </div>
+    <div class="px-list" id="px-list"></div>
+    <div class="modal-foot">
+      <span class="px-sel" id="px-sel">已选 0 个</span>
+      <button class="btn-plain" data-close>取消</button>
+      <button class="btn-solid" id="px-add">加入作业集</button>
+    </div>`;
+
+  const list = $('#px-list', root);
+  const sel = $('#px-sel', root);
+  const addBtn = $('#px-add', root);
+
+  // 底栏是弹窗创建之后才注入的，modal() 当时绑不到这里的 data-close，这里补上
+  $$('.modal-foot [data-close]', root).forEach(b => b.addEventListener('click', close));
+
+  // 用「选择集」记住用户勾选的项：默认一个都不选，由用户自己挑没打过的；
+  // 搜索/切换筛选重绘时勾选状态不会丢。导入过的行默认灰着（想重跑可手动勾）。
+  const on = new Set();
+
+  const visible = () => {
+    const q = ($('#px-q', root).value || '').trim().toLowerCase();
+    const onlyTodo = $('#px-only-todo', root).checked;
+    let rows = items;
+    if (onlyTodo) rows = rows.filter(r => r.ready && !r.imported);
+    if (q) rows = rows.filter(r => (r.name + ' ' + r.pname + ' ' + r.stage).toLowerCase().indexOf(q) >= 0);
+    return rows;
+  };
+
+  const paint = () => {
+    const rows = visible();
+    if (!rows.length) {
+      list.innerHTML = '<div class="px-empty">没有符合条件的条目</div>';
+    } else {
+      list.innerHTML = rows.map(r => {
+        const tag = r.ready
+          ? (r.imported ? `<i class="px-tag done" title="${esc(r.importedAt)} 导入过">已导入</i>` : '<i class="px-tag">未导入</i>')
+          : `<i class="px-tag lock">${esc(pxEliteText(r.needElite))}${r.needLevel > 1 ? ' Lv' + r.needLevel : ''} 可开</i>`;
+        const checked = r.ready && on.has(r.stage);
+        return `<label class="px-row${r.ready ? '' : ' is-locked'}">
+          <input type="checkbox" data-stage="${esc(r.stage)}" ${checked ? 'checked' : ''} ${r.ready ? '' : 'disabled'}>
+          <span class="px-r r${r.rarity}">${r.rarity}★</span>
+          <span class="px-name">${esc(r.name)}</span>
+          <span class="px-pname">${esc(r.pname)}</span>
+          <span class="px-code">${esc(r.stage)}</span>
+          ${tag}
+        </label>`;
+      }).join('');
+    }
+    syncSel();
+  };
+
+  const selected = () => items.filter(r => r.ready && on.has(r.stage)).map(r => r.stage);
+
+  function syncSel() {
+    const n = selected().length;
+    sel.textContent = `已选 ${n} 个`;
+    addBtn.disabled = n === 0;
+    addBtn.textContent = n ? `加入作业集（${n}）` : '加入作业集';
+  }
+
+  list.addEventListener('change', e => {
+    const box = e.target;
+    if (!box || box.type !== 'checkbox' || !box.dataset.stage) return;
+    if (box.checked) on.add(box.dataset.stage);
+    else on.delete(box.dataset.stage);
+    syncSel();
+  });
+  $('#px-q', root).addEventListener('input', paint);
+  $('#px-only-todo', root).addEventListener('change', paint);
+  // 全选/清空只作用在当前筛选可见的条目上，避免误改看不见的那一堆
+  $('#px-all', root).addEventListener('click', () => {
+    visible().forEach(r => { if (r.ready) on.add(r.stage); });
+    paint();
+  });
+  $('#px-none', root).addEventListener('click', () => {
+    visible().forEach(r => { if (r.ready) on.delete(r.stage); });
+    paint();
+  });
+
+  addBtn.addEventListener('click', async () => {
+    const stages = selected();
+    if (!stages.length) return;
+    addBtn.disabled = true;
+    addBtn.textContent = '正在取作业…';
+    try {
+      const r = await api('/api/paradox/pick', { file: S.current, stages });
+      const ops = [];
+      (r.ok || []).forEach(x => {
+        const meta = items.find(i => i.stage === x.stage) || {};
+        ops.push({
+          id: x.copilotId, title: `${meta.name || ''} · ${meta.pname || ''}`.trim(),
+          rating: x.rating, mode: 'ready',
+          stageCode: x.stage, stageId: x.stage,
+          // MAA 靠 TaskList 的 Name 导航到悖论关卡，这里必须只是干员名；
+          // 界面里显示的是 title / stageCode，不受影响。
+          name: meta.name || '',
+          difficulty: x.difficulty, difficultyText: x.difficultyText,
+          maaCode: 'maa://' + x.copilotId,
+        });
+      });
+      const added = addManyToBasket(ops);
+      S.paradoxPending = (S.paradoxPending || []).concat((r.ok || []).map(x => x.stage));
+      const failed = r.failed || [];
+      close();
+      if (added) toast(`已加入 ${added} 个悖论作业` + (failed.length ? `，${failed.length} 个没有作业` : ''));
+      else toast('都没能加入，看看下面的原因', 'warn', 4000);
+      if (failed.length) {
+        modal(`<h3>这 ${failed.length} 个没加进去</h3>
+          <div class="sub">作业站没有对应关卡的作业，只能等有人上传，或者手动打一次。</div>
+          <div class="px-list">${failed.map(f => {
+            const meta = items.find(i => i.stage === f.stage) || {};
+            return `<div class="px-row"><span class="px-r r${meta.rarity || 0}">${meta.rarity || ''}★</span>
+              <span class="px-name">${esc(meta.name || f.stage)}</span>
+              <span class="px-pname">${esc(f.reason || '')}</span></div>`;
+          }).join('')}</div>
+          <div class="modal-foot"><button class="btn-plain" data-close>知道了</button></div>`);
+      }
+    } catch (e) {
+      toast(e.message, 'err', 4000);
+      addBtn.disabled = false;
+      syncSel();
+    }
+  });
+
+  paint();
 }
 
 /* ------------------------------------------------------------ 搜索 */
@@ -426,6 +628,21 @@ function chipTitle(o) {
   return `${e} ${o.level} 级${m ? ' · ' + m : ''}`;
 }
 
+/* 浏览量展示：过万缩写成 x.x万 */
+function fmtViews(n) {
+  n = Number(n) || 0;
+  if (n >= 10000) return (n / 10000).toFixed(1).replace(/\.0$/, '') + '万';
+  return n ? String(n) : '';
+}
+
+/* 作业简介取第一行有信息量的文字：跳过作者署名、群号、任何带链接的推广行 */
+function briefOf(op) {
+  const lines = (op.details || '').split('\n').map(s => s.trim()).filter(Boolean);
+  const line = lines.find(s => s.length >= 4 && !/http|qm\.qq\.com/.test(s)
+    && !/^(原作者|json作者|作者|作业交流群|MAA|maa|【)/.test(s)) || '';
+  return line.slice(0, 60);
+}
+
 function opCard(op, opts = {}) {
   const mode = op.mode || 'blocked';
   return `
@@ -433,6 +650,7 @@ function opCard(op, opts = {}) {
       <div class="op-top">
         <span class="stars">${stars(op.rating)}</span>
         <span class="op-id">#${op.id}</span>
+        <span class="op-up" title="作者：${esc(op.uploader || '佚名')}">@${esc(op.uploader || '佚名')}</span>
       </div>
       <div class="op-title" title="${esc(op.title)}">${esc(op.title)}</div>
       <div class="badges">
@@ -536,9 +754,12 @@ function renderResult(d) {
         <div class="stage-main">
           <div class="stage-code">${esc(st.code)}<small class="sc-sub">${esc(st.name || '')}${variant}</small></div>
           <div class="stage-mid">
-            <div class="stage-best">${b ? esc(b.title) : '（暂无可用作业）'}</div>
+            <div class="stage-best-line">
+              <div class="stage-best">${b ? esc(b.title) : '（暂无可用作业）'}</div>
+              ${b ? `<div class="best-meta"><b>@${esc(b.uploader || '佚名')}</b>${briefOf(b) ? ' · ' + esc(briefOf(b)) : ''}</div>` : ''}
+            </div>
             <div class="stage-sub">
-              ${b ? `<span class="stars">${stars(b.rating)}</span><span>${b.total} 人</span>` : ''}
+              ${b ? `<span class="stars">${stars(b.rating)}</span><span>${b.total} 人</span><span>浏览 ${fmtViews(b.views) || 0}</span>` : ''}
               <span>共 ${s.total} 份</span>
               ${s.counts.ready ? `<span style="color:var(--mint)">可抄 ${s.counts.ready}</span>` : ''}
               ${s.counts.borrow ? `<span style="color:var(--indigo)">借人 ${s.counts.borrow}</span>` : ''}
@@ -557,6 +778,8 @@ function renderResult(d) {
               <span class="badge ${op.mode}">${MODE_CN[op.mode]}</span>
               ${difficultyTag(op, st.code)}
               <span class="t" title="${esc(op.title)}">${esc(op.title)}</span>
+              <span class="up" title="作者：${esc(op.uploader || '佚名')}">@${esc(op.uploader || '佚名')}</span>
+              <span class="vw">浏览 ${fmtViews(op.views) || 0}</span>
               <span style="font-size:11px;color:var(--text-3)">${op.total} 人</span>
               <button class="mini-btn" data-copy="${esc(op.maaCode)}">复制</button>
               <button class="mini-btn accent" data-add="${op.id}" data-variant="${esc(st.variant || '')}" data-stage="${esc(st.stageId)}" ${inBasket(op.id, st.variant) ? 'disabled' : ''}>${inBasket(op.id, st.variant) ? '已在' : '加入'}</button>
@@ -673,24 +896,38 @@ function inBasket(id, variant) {
     && (variant === undefined || (o.variant || '') === (variant || '')));
 }
 
-function addToBasket(op, variant) {
+function addToBasket(op, variant, quiet) {
   const v = variant || op.variant || '';
   if (inBasket(op.id, v || undefined)) {
-    toast(v === 'raid' ? '这份作业已经在作业集的突袭里了' : (v === 'normal' ? '这份作业已经在作业集的普通里了' : '已经在作业集里了'), 'warn');
-    return;
+    if (!quiet) toast(v === 'raid' ? '这份作业已经在作业集的突袭里了' : (v === 'normal' ? '这份作业已经在作业集的普通里了' : '已经在作业集里了'), 'warn');
+    return false;
   }
   S.basket.push({
     id: op.id, copilotId: op.id, title: op.title, rating: op.rating,
     mode: op.mode, stageCode: op.stageCode || '', stageId: op.stageId || '',
+    name: op.name || '',
     maaCode: op.maaCode,
     difficulty: Number(op.difficulty) || 1,
     difficultyText: op.difficultyText || '普通',
     variant: v,
   });
+  if (quiet) return true;
   renderBasket();
   const fab = $('#basket-fab');
   if (fab) { fab.classList.remove('pulse'); void fab.offsetWidth; fab.classList.add('pulse'); }
   toast(v === 'raid' ? '已加入作业集（突袭）' : '已加入作业集');
+  return true;
+}
+
+/* 批量加入（悖论模拟一次可能几十上百条）：不逐条弹提示，也不逐条重绘 */
+function addManyToBasket(ops) {
+  let n = 0;
+  (ops || []).forEach(op => { if (addToBasket(op, op.variant || '', true)) n++; });
+  if (!n) return 0;
+  renderBasket();
+  const fab = $('#basket-fab');
+  if (fab) { fab.classList.remove('pulse'); void fab.offsetWidth; fab.classList.add('pulse'); }
+  return n;
 }
 
 function basketDiffTag(o) {
@@ -792,7 +1029,7 @@ async function applyToMaa() {
   btn.disabled = true;
   const items = S.basket.map(o => ({
     copilotId: o.copilotId, stageCode: o.stageCode, title: o.title,
-    variant: o.variant || '',
+    name: o.name || '', variant: o.variant || '',
   }));
   const payload = {
     items,
@@ -811,11 +1048,20 @@ async function applyToMaa() {
   try {
     const { taskId } = await api('/api/maa/apply', payload);
     await pollTask(taskId, m.el);
+    const px = S.paradoxPending || [];
     S.basket = [];
     renderBasket();
     toggleBasket(false);          // 窄屏写完顺手收起抽屉
     refreshMaaStatus();
     if (S.result) doSearch();
+    // 悖论：写完才记「已导入」，下次打开面板默认不勾
+    if (px.length) {
+      S.paradoxPending = [];
+      api('/api/paradox/mark', { file: S.current, stages: px })
+        .then(() => api('/api/paradox/plan', { file: S.current }))
+        .then(p => { if (S.detail) S.detail.paradox = p.stats; updateParadoxChip(); })
+        .catch(() => { });
+    }
   } catch (e) {
     toast('写入失败：' + e.message, 'err', 5000);
     btn.disabled = false;

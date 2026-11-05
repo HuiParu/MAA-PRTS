@@ -10,6 +10,7 @@ import shutil
 import threading
 
 from . import settings, tasks, updater
+from . import paradox
 
 ELITE_CN = {0: '精零', 1: '精一', 2: '精二'}
 
@@ -100,7 +101,17 @@ def account_detail(file: str) -> dict:
         'chars': chars,
         'maa': snap.get('maa') or {},
         'sync': snap.get('sync') or {},
+        'paradox': paradox.plan(snap)['stats'],
     }
+
+
+def save_account(file: str, snap: dict) -> None:
+    """把整份账号快照写回磁盘（原子替换）"""
+    path = os.path.join(_accounts_dir(), os.path.basename(file))
+    tmp = path + '.tmp'
+    with io.open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(snap, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
 
 
 def save_maa_meta(file: str, patch: dict) -> dict:

@@ -336,6 +336,51 @@ def check_copilot_variants():
     assert resources.resolve('act13side_ex01#f#')['stages'][0]['stageId'] == 'act13side_ex01'
 
 
+# ---------------------------------------------------------------- B10 悖论模拟
+def check_paradox_plan():
+    """悖论清单：解锁条件只看对应干员的精英化/等级
+
+    悖论关卡是官方固定阵容，所以「能打不能打」= 这个干员的 elite/level 够不够；
+    导入过的要能记住，下次默认不再勾。
+    """
+    from core import paradox
+
+    t = paradox.table()
+    assert t.get('count', 0) > 200, '悖论清单条数异常：%r' % t.get('count')
+    for cid, e in (t.get('chars') or {}).items():
+        assert e.get('stage', '').startswith('mem_'), '%s 的关卡代号不像悖论：%r' % (cid, e.get('stage'))
+        assert e.get('name'), '%s 没有干员名' % cid
+        assert e.get('elite') in (0, 1, 2), '%s 解锁精英化异常：%r' % (cid, e.get('elite'))
+
+    sample = [(c, e) for c, e in sorted((t.get('chars') or {}).items()) if e['elite'] == 2]
+    (a_cid, a_e), (b_cid, b_e) = sample[0], sample[1]
+    snap = {'chars': [
+        {'charId': a_cid, 'name': a_e['name'], 'rarity': 6, 'profession': '近卫',
+         'elite': 2, 'level': 90},                        # 达标
+        {'charId': b_cid, 'name': b_e['name'], 'rarity': 6, 'profession': '近卫',
+         'elite': 1, 'level': 70},                        # 精英化不够
+    ]}
+    p = paradox.plan(snap)
+    st = p['stats']
+    assert st['owned'] == 2, '只应看到两个干员，实际 %r' % st
+    assert st['ready'] == 1 and st['locked'] == 1, '达成判定错：%r' % st
+    assert st['todo'] == 1 and st['imported'] == 0
+
+    # 已导入标记：plan 要能读回来，且不再算进 todo
+    paradox.mark_imported(snap, [a_e['stage']])
+    p2 = paradox.plan(snap)
+    assert p2['stats']['imported'] == 1 and p2['stats']['todo'] == 0, p2['stats']
+    hit = [i for i in p2['items'] if i['stage'] == a_e['stage']][0]
+    assert hit['imported'] is True and hit['importedAt'], hit
+
+
+def check_maa_paradox_name():
+    """写 MAA 时 Name 用可读名字，FilePath 仍按关卡代号命名"""
+    src = open(os.path.join(REPO, 'backend', 'core', 'maa.py'), encoding='utf-8').read()
+    assert "'Name': it.get('name') or stage_code" in src, 'maa.py 的 Name 取值被改回去了'
+    assert "fname = '%s_%s.json' % (_safe(stage_code), cid)" in src, '作业文件名应仍用关卡代号'
+
+
 # ---------------------------------------------------------------- C. 启动冒烟
 def _copy_project(tmp):
     ignore = shutil.ignore_patterns(
@@ -443,6 +488,8 @@ def main():
         r.check('B7 作业 json 修正后 MaaCore 可解析', check_copilot_normalize)
         r.check('B8 难度位标志（普通/突袭/通用）', check_copilot_difficulty)
         r.check('B9 突袭关拆普通/突袭两行', check_copilot_variants)
+        r.check('B10 悖论清单与解锁推算', check_paradox_plan)
+        r.check('B11 悖论写 MAA 的命名', check_maa_paradox_name)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

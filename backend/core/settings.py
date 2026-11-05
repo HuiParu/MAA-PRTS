@@ -67,6 +67,7 @@ RES = resource_root()
 
 STATIC_DIR = os.path.join(RES, 'frontend')
 PACK_PATH = os.path.join(RES, 'resources', 'arknights.json')
+PARADOX_PATH = os.path.join(RES, 'resources', 'paradox.json')
 
 CONFIG_DIR = os.path.join(ROOT, 'config')
 SKLAND_DIR = os.path.join(CONFIG_DIR, 'skland')
@@ -217,3 +218,11 @@ def pack_path() -> str:
     if os.path.isfile(local):
         return local
     return PACK_PATH
+
+
+def paradox_path() -> str:
+    """悖论模拟清单路径（与 pack_path 同样的覆盖规则）"""
+    local = os.path.join(ROOT, 'resources', 'paradox.json')
+    if os.path.isfile(local):
+        return local
+    return PARADOX_PATH
