@@ -8,7 +8,7 @@ if errorlevel 1 goto :CannotEnter
 set "DEBUG_MODE="
 if /i "%~1"=="--debug" set "DEBUG_MODE=1"
 
-if exist "dist\MAA-PRTS\MAA-PRTS.exe" goto :RunExe
+if exist "build\MAA-PRTS\MAA-PRTS.exe" goto :RunExe
 if not exist "backend\main.py" goto :MissingSource
 if not exist "tools\setup\prepare-python.bat" goto :MissingSource
 
@@ -39,7 +39,7 @@ exit /b 0
 
 :RunExe
 if defined DEBUG_MODE goto :RunDebugExe
-start "" /D "%CD%\dist\MAA-PRTS" "%CD%\dist\MAA-PRTS\MAA-PRTS.exe"
+start "" /D "%CD%\build\MAA-PRTS" "%CD%\build\MAA-PRTS\MAA-PRTS.exe"
 if errorlevel 1 goto :ExeFailed
 exit /b 0
 
@@ -47,7 +47,7 @@ exit /b 0
 :RunDebugExe
 set "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333"
 echo [调试] 正在启动编译版 MAA-PRTS（DevTools 端口：9333）...
-"%CD%\dist\MAA-PRTS\MAA-PRTS.exe" --debug
+"%CD%\build\MAA-PRTS\MAA-PRTS.exe" --debug
 set "APP_RC=%ERRORLEVEL%"
 if not "%APP_RC%"=="0" goto :AppFailed
 echo.
@@ -97,7 +97,7 @@ exit /b %INSTALL_RC%
 
 
 :ExeFailed
-echo [错误] 无法启动 dist\MAA-PRTS\MAA-PRTS.exe。
+echo [错误] 无法启动 build\MAA-PRTS\MAA-PRTS.exe。
 pause
 exit /b 1
 
@@ -105,7 +105,7 @@ exit /b 1
 :AppFailed
 echo.
 echo [错误] 程序异常退出，退出码 %APP_RC%。
-echo 日志位置：config\app.log
+echo 日志位置：debug\app.log
 echo 若错误提到 WebView2 或 Edge Chromium，请安装 Microsoft Edge WebView2 Runtime 后重试。
 pause
 exit /b %APP_RC%

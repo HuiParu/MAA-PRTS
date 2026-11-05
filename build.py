@@ -3,10 +3,11 @@
 
 用法：python build.py
 入口：backend/main.py
-产物：dist/MAA-PRTS/MAA-PRTS.exe（单文件夹，双击即用）
+产物：build/MAA-PRTS/MAA-PRTS.exe（整个文件夹即发布包，拷走即用）
+构建只写 build/ 一个目录；中间产物放 build/work/，成功后自动删掉。
 
-打包只带只读资源（frontend / resources）。用户数据（skland / config）
-永远写在 exe 所在项目根目录，不会被打进包里。
+打包只带只读资源（frontend / resources）。用户数据永远写在 exe 所在
+项目根目录的 config/（含加密 token 与账号练度），不会被打进包里。
 """
 from __future__ import annotations
 
@@ -81,19 +82,25 @@ def make_icon():
 
 def build():
     icon = make_icon()
-    # 只清打包产物，保留 dist/README.md 与用户放在 dist 里的东西
-    for d in ('build', os.path.join('dist', 'MAA-PRTS')):
-        p = os.path.join(HERE, d)
-        if os.path.isdir(p):
-            shutil.rmtree(p, ignore_errors=True)
+    # 构建只写 build/ 一个目录：work/ 是中间产物，MAA-PRTS/ 是发布包本体。
+    # 每次全清这两个子目录，保留入库的 build/README.md。
+    build_dir = os.path.join(HERE, 'build')
+    work_dir = os.path.join(build_dir, 'work')
+    for d in (work_dir, os.path.join(build_dir, 'MAA-PRTS')):
+        if os.path.isdir(d):
+            shutil.rmtree(d, ignore_errors=True)
 
     cmd = [
         sys.executable, '-m', 'PyInstaller',
         '--noconfirm', '--clean',
         '--name', 'MAA-PRTS',
+        '--distpath', build_dir,
+        '--workpath', work_dir,
+        '--specpath', work_dir,
         '--windowed',
-        '--add-data', 'frontend;frontend',
-        '--add-data', 'resources;resources',
+        # 指定了 specpath 后，--add-data 的源路径必须用绝对路径
+        '--add-data', os.path.join(HERE, 'frontend') + ';frontend',
+        '--add-data', os.path.join(HERE, 'resources') + ';resources',
         '--hidden-import', 'clr',
         '--hidden-import', 'clr_loader',
         '--hidden-import', 'pythonnet',
@@ -107,10 +114,13 @@ def build():
     print('执行：\n  ' + ' '.join(cmd))
     rc = subprocess.call(cmd, cwd=HERE)
     if rc != 0:
-        print('\n打包失败，退出码 %d' % rc)
+        print('\n打包失败，退出码 %d（中间产物保留在 build\\work 以便排查）' % rc)
         return rc
 
-    exe = os.path.join(HERE, 'dist', 'MAA-PRTS', 'MAA-PRTS.exe')
+    # 每次构建都是 --clean 全量重建，中间产物没有复用价值，成功即删
+    shutil.rmtree(work_dir, ignore_errors=True)
+
+    exe = os.path.join(build_dir, 'MAA-PRTS', 'MAA-PRTS.exe')
     print('\n完成：%s' % exe)
     if os.path.isfile(exe):
         size = os.path.getsize(exe) / 1024 / 1024

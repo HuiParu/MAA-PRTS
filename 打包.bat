@@ -21,7 +21,8 @@ set "BUILD_RC=%ERRORLEVEL%"
 if not "%BUILD_RC%"=="0" goto :BuildFailed
 
 echo.
-echo [完成] 打包产物位于 dist\MAA-PRTS\MAA-PRTS.exe
+echo [完成] 打包产物位于 build\MAA-PRTS\MAA-PRTS.exe
+echo [完成] 整个 build\MAA-PRTS 文件夹即发布包，压缩成 zip 就是 Release 附件。
 exit /b 0
 
 
