@@ -29,7 +29,7 @@ import time
 
 from . import settings
 
-APP_VERSION = '2.2.3'
+APP_VERSION = '2.2.4'
 
 STATE_PATH = os.path.join(settings.CONFIG_DIR, 'gamedata.json')
 
