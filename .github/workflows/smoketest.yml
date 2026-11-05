@@ -1,0 +1,43 @@
+# 冒烟测试 CI：任意分支上有提交就在该分支上跑一遍 tools/smoketest
+# （A 静态检查 / B DPAPI 与 token 存储 / C 启动冒烟，详见 tools/smoketest/README.md）
+name: Smoke Test
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同一分支新提交会取消还没跑完的旧任务
+concurrency:
+  group: smoketest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoketest:
+    name: 冒烟测试（Windows）
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          show-progress: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      # 冒烟测试只需运行依赖（B/C 组不联网、不开窗口），不用 pyinstaller
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check --prefer-binary pywebview pythonnet pillow
+
+      - name: Run smoke test
+        run: python -u tools/smoketest/smoke_test.py
