@@ -177,30 +177,47 @@ def apply_plan(items, profile=None, mode='replace', auto_start=True, tid=None):
 
     old = list(cop.get('TaskList') or []) if mode == 'append' else []
     new_entries, files = [], []
+    cache = {}                      # copilotId → (文件名, flags)，同一份作业被普通/突袭两行各加一次时不重复下载
 
     for idx, it in enumerate(items, 1):
         cid = int(it['copilotId'])
         stage_code = it.get('stageCode') or str(cid)
-        log('[%d/%d] 下载作业 #%s %s' % (idx, len(items), cid, it.get('title') or ''))
-        content = copilot.download_content(cid)
-        content, notes = copilot.normalize_for_maa(content)
-        for n in notes:
-            log('    修正：%s' % n)
-        fname = '%s_%s.json' % (_safe(stage_code), cid)
-        os.makedirs(_copilot_dir(), exist_ok=True)
-        fpath = os.path.join(_copilot_dir(), fname)
-        with io.open(fpath, 'w', encoding='utf-8') as f:
-            json.dump(content, f, ensure_ascii=False, indent=2)
-        files.append(fname)
-        new_entries.append({
-            'Name': stage_code,
-            'IsNavNameOverride': False,
-            'FilePath': 'config\\copilot\\' + fname,
-            'CopilotId': cid,
-            'IsRaid': bool(content.get('is_raid')),
-            'IsChecked': True,
-            'Index': 0,
-        })
+        if cid in cache:
+            fname, flags = cache[cid]
+            log('[%d/%d] 复用已下载的作业 #%s %s' % (idx, len(items), cid, it.get('title') or ''))
+        else:
+            log('[%d/%d] 下载作业 #%s %s' % (idx, len(items), cid, it.get('title') or ''))
+            content = copilot.download_content(cid)
+            content, notes = copilot.normalize_for_maa(content)
+            for n in notes:
+                log('    修正：%s' % n)
+            flags = copilot.difficulty_flags(content)
+            fname = '%s_%s.json' % (_safe(stage_code), cid)
+            os.makedirs(_copilot_dir(), exist_ok=True)
+            fpath = os.path.join(_copilot_dir(), fname)
+            with io.open(fpath, 'w', encoding='utf-8') as f:
+                json.dump(content, f, ensure_ascii=False, indent=2)
+            cache[cid] = (fname, flags)
+        if fname not in files:
+            files.append(fname)
+
+        # 作业集里带 variant 的条目是从「普通 / 突袭」那一行加的，只写对应那一条，
+        # 这样同一关可以分别挑一份普通作业和一份突袭作业；不带 variant 的（卡片、
+        # 详情弹窗）沿用 MAA 的做法，按作业自己的难度标志展开。
+        raids = copilot.entry_variants(flags, it.get('variant'))
+        for is_raid in raids:
+            new_entries.append({
+                'Name': stage_code,
+                'IsNavNameOverride': False,
+                'FilePath': 'config\\copilot\\' + fname,
+                'CopilotId': cid,
+                'IsRaid': is_raid,
+                'IsChecked': True,
+                'Index': 0,
+            })
+        log('    难度：%s → 写入 %s' % (
+            copilot.difficulty_text(flags),
+            ' + '.join('突袭' if r else '普通' for r in raids) or '无'))
 
     task_list = old + new_entries
     for i, t in enumerate(task_list):
