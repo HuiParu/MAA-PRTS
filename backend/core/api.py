@@ -7,7 +7,7 @@ import os
 import traceback
 import urllib.parse
 
-from . import accounts, copilot, maa, paradox, resources, settings, tasks, version
+from . import accounts, copilot, maa, paradox, resources, settings, sklogin, tasks, version
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = settings.static_dir()
@@ -154,6 +154,24 @@ def api_maa_status(_q, _body):
     return maa.status()
 
 
+def api_maa_running(_q, _body):
+    """正在运行的 MAA 进程（首次引导从进程反查安装目录）"""
+    return {'list': maa.list_running()}
+
+
+def api_skland_login(_q, _body):
+    """打开内置森空岛登录窗口，登录成功自动抓 token"""
+    return sklogin.start()
+
+
+def api_skland_login_status(_q, _body):
+    return sklogin.status()
+
+
+def api_skland_login_cancel(_q, _body):
+    return sklogin.cancel()
+
+
 def api_maa_probe(q, _body):
     """检测一个目录是不是 MAA 根目录（首次引导 / 设置里用）"""
     d = (q.get('dir') or '').strip()
@@ -289,7 +307,11 @@ ROUTES = {
     '/api/gamedata/ack': api_gamedata_ack,
     '/api/op': api_op,
     '/api/maa/status': api_maa_status,
+    '/api/maa/running': api_maa_running,
     '/api/maa/probe': api_maa_probe,
+    '/api/skland/login': api_skland_login,
+    '/api/skland/login/status': api_skland_login_status,
+    '/api/skland/login/cancel': api_skland_login_cancel,
     '/api/maa/close': api_maa_close,
     '/api/maa/open': api_maa_open,
     '/api/maa/apply': api_maa_apply,

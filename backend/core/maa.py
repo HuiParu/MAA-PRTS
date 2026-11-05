@@ -96,6 +96,79 @@ def is_running() -> bool:
         return False
 
 
+def list_running():
+    """列出正在运行的 MAA.exe，从进程反查安装目录（首次引导用）。
+
+    tasklist 只告诉有没有、不给路径，起 PowerShell 又慢，直接
+    Toolhelp32 快照 + QueryFullProcessImageNameW 拿完整路径。
+    同目录多开只留一条，pid 合并展示。
+    """
+    import ctypes
+    import ctypes.wintypes as wintypes
+
+    class PE32W(ctypes.Structure):
+        _fields_ = [
+            ('dwSize', wintypes.DWORD), ('cntUsage', wintypes.DWORD),
+            ('th32ProcessID', wintypes.DWORD),
+            ('th32DefaultHeapID', ctypes.c_size_t),
+            ('th32ModuleID', wintypes.DWORD), ('cntThreads', wintypes.DWORD),
+            ('th32ParentProcessID', wintypes.DWORD),
+            ('pcPriClassBase', wintypes.LONG), ('dwFlags', wintypes.DWORD),
+            ('szExeFile', ctypes.c_wchar * 260),
+        ]
+
+    TH32CS_SNAPPROCESS = 0x2
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    k32 = ctypes.windll.kernel32
+    k32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    k32.Process32FirstW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    k32.Process32NextW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    k32.OpenProcess.restype = ctypes.c_void_p
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.QueryFullProcessImageNameW.argtypes = [
+        ctypes.c_void_p, wintypes.DWORD, ctypes.c_wchar_p, ctypes.c_void_p]
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    k32.CloseHandle.restype = wintypes.BOOL
+
+    def image_path(pid):
+        """exe 完整路径；权限不够（别的用户的进程）拿不到就返回 None"""
+        h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            return None
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            n = wintypes.DWORD(len(buf))
+            if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n)):
+                return buf.value
+            return None
+        finally:
+            k32.CloseHandle(h)
+
+    found = {}
+    try:
+        snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if not snap or snap == ctypes.c_void_p(-1).value:
+            return []
+        try:
+            ent = PE32W()
+            ent.dwSize = ctypes.sizeof(PE32W)
+            ok = k32.Process32FirstW(snap, ctypes.byref(ent))
+            while ok:
+                if ent.szExeFile.lower() == 'maa.exe':
+                    p = image_path(ent.th32ProcessID)
+                    if p:
+                        row = found.setdefault(p.lower(), {'path': p, 'dir': os.path.dirname(p), 'pids': []})
+                        row['pids'].append(ent.th32ProcessID)
+                ok = k32.Process32NextW(snap, ctypes.byref(ent))
+        finally:
+            k32.CloseHandle(snap)
+    except Exception:
+        return []
+    out = sorted(found.values(), key=lambda r: r['dir'])
+    return out
+
+
 def status():
     d = _dir()
     cfg_ok = os.path.isfile(_config_path())

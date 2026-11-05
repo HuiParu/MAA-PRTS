@@ -1212,37 +1212,64 @@ function openOnboarding() {
         </div>
         <div>
           <h2>两步就能开始</h2>
-          <p>先填森空岛 token 读取练度，再指一下 MAA 目录。数据都保存在本机项目里。</p>
+          <p>先指一下 MAA 目录，再拿森空岛 token 读取练度。数据都保存在本机项目里。</p>
         </div>
       </div>
 
-      <div class="onb-step">
-        <div class="onb-idx">1</div>
-        <div class="onb-body">
-          <h3>森空岛 Token</h3>
-          <p>用于拉取干员、等级、专精、模组，生成本地账号配置。</p>
-          <textarea id="onb-token" rows="3" spellcheck="false"
-            placeholder="把你自己账号的森空岛 token 粘贴到这里"></textarea>
-          <div class="path-row">
-            <input type="text" id="onb-alias" placeholder="备注（可选，例如：大号）">
-            <button class="btn-plain mini" id="onb-token-help">怎么拿 token</button>
+      <div class="onb-page" data-page="1">
+        <div class="onb-step">
+          <div class="onb-idx">1</div>
+          <div class="onb-body">
+            <h3>MAA 根目录</h3>
+            <p>包含 <code>MAA.exe</code> 的那个文件夹，用来写入多个作业并重启 MAA。</p>
+            <div class="onb-box">
+              <div class="onb-box-head">
+                <span>正在运行的 MAA</span>
+                <button class="btn-plain mini" id="onb-procs-refresh">刷新</button>
+              </div>
+              <div id="onb-procs"><span class="onb-hint">检测中…</span></div>
+            </div>
+            <div class="onb-manual">
+              <h4>自行选择 MAA 路径</h4>
+              <div class="path-row">
+                <input type="text" id="onb-maa" placeholder="例如 D:\\MAA\\MAA-v6.20.1-win-x64">
+                <button class="btn-plain mini" id="onb-pick">浏览</button>
+                <button class="btn-plain mini" id="onb-probe">检测</button>
+              </div>
+              <div class="onb-hint" id="onb-maa-state">还没检测。</div>
+            </div>
           </div>
-          <div class="onb-hint token-guide" id="onb-token-guide" hidden>${TOKEN_GUIDE}</div>
-          <div class="onb-hint">token 会加密写进 <code>config/skland/tokens.json</code>，下次打开可以一键同步全部账号。</div>
         </div>
       </div>
 
-      <div class="onb-step">
-        <div class="onb-idx">2</div>
-        <div class="onb-body">
-          <h3>MAA 根目录</h3>
-          <p>包含 <code>MAA.exe</code> 的那个文件夹，用来写入多个作业并重启 MAA。</p>
-          <div class="path-row">
-            <input type="text" id="onb-maa" placeholder="例如 D:\\MAA\\MAA-v6.20.1-win-x64">
-            <button class="btn-plain mini" id="onb-pick">浏览</button>
-            <button class="btn-plain mini" id="onb-probe">检测</button>
+      <div class="onb-page" data-page="2" hidden>
+        <div class="onb-step">
+          <div class="onb-idx">2</div>
+          <div class="onb-body">
+            <h3>森空岛 Token</h3>
+            <p>用于拉取干员、等级、专精、模组，生成本地账号配置。</p>
+            <div class="onb-login">
+              <div class="onb-login-main">
+                <div>
+                  <b>在内置窗口登录（推荐）</b>
+                  <span>打开森空岛官网的登录页，登录成功后自动抓取 token 填进下方，不用自己翻 F12。</span>
+                </div>
+                <button class="btn-solid mini" id="onb-login-btn">打开登录窗口</button>
+              </div>
+              <div class="onb-hint" id="onb-login-state">小窗会要求重新登录一次森空岛——token 只在登录的瞬间出现，抓到就自动验证并填到下方。</div>
+            </div>
+            <div class="onb-manual">
+              <h4>自行输入森空岛 token</h4>
+              <textarea id="onb-token" rows="3" spellcheck="false"
+                placeholder="把你自己账号的森空岛 token 粘贴到这里"></textarea>
+              <div class="path-row">
+                <input type="text" id="onb-alias" placeholder="备注（可选，例如：大号）">
+                <button class="btn-plain mini" id="onb-token-help">怎么拿 token</button>
+              </div>
+              <div class="onb-hint token-guide" id="onb-token-guide" hidden>${TOKEN_GUIDE}</div>
+              <div class="onb-hint">token 会加密写进 <code>config/skland/tokens.json</code>，下次打开可以一键同步全部账号。</div>
+            </div>
           </div>
-          <div class="onb-hint" id="onb-maa-state">还没检测。</div>
         </div>
       </div>
 
@@ -1252,16 +1279,28 @@ function openOnboarding() {
         <span class="onb-note">数据目录 <code>${esc(p.skland || 'config/skland/')}</code></span>
         <div class="onb-btns">
           <button class="btn-plain" id="onb-skip">稍后设置</button>
-          <button class="btn-solid" id="onb-go">保存并同步账号</button>
+          <button class="btn-plain" id="onb-back" hidden>上一步</button>
+          <button class="btn-solid" id="onb-next">下一步</button>
+          <button class="btn-solid" id="onb-go" hidden>保存并同步账号</button>
         </div>
       </div>
     </div>`;
   document.body.appendChild(m);
 
+  let loginTimer = null;
+  const stopLoginPoll = () => { if (loginTimer) { clearInterval(loginTimer); loginTimer = null; } };
   const close = () => {
+    stopLoginPoll();
+    api('/api/skland/login/cancel', {}).catch(() => { });   // 顺手关掉可能还开着的登录小窗
     m.style.transition = '.18s ease';
     m.style.opacity = '0';
     setTimeout(() => m.remove(), 180);
+  };
+  const showPage = n => {
+    $$('[data-page]', m).forEach(el => { el.hidden = +el.dataset.page !== n; });
+    $('#onb-next', m).hidden = n !== 1;
+    $('#onb-go', m).hidden = n !== 2;
+    $('#onb-back', m).hidden = n !== 2;
   };
   const state = $('#onb-maa-state', m);
   $('#onb-token-help', m).addEventListener('click', () => {
@@ -1293,25 +1332,113 @@ function openOnboarding() {
     }
   };
 
+  // 从正在运行的 MAA.exe 反查安装目录，勾选即填入并检测
+  const loadProcs = async () => {
+    const box = $('#onb-procs', m);
+    box.innerHTML = '<span class="onb-hint">检测中…</span>';
+    try {
+      const r = await api('/api/maa/running');
+      const rows = r.list || [];
+      if (!rows.length) {
+        box.innerHTML = '<span class="onb-hint">未找到正在运行的 MAA——先启动 MAA 再点「刷新」，或在下面自行选择路径。</span>';
+        return;
+      }
+      box.innerHTML = '';
+      rows.forEach((row, i) => {
+        const lab = document.createElement('label');
+        lab.className = 'onb-proc';
+        lab.innerHTML = `<input type="radio" name="onb-proc"${i === 0 ? ' checked' : ''}>
+          <code title="${esc(row.path)}">${esc(row.dir)}</code>
+          <span class="onb-proc-pid">PID ${row.pids.join(' / ')}</span>`;
+        lab.querySelector('input').addEventListener('change', () => {
+          $('#onb-maa', m).value = row.dir;
+          probe();
+        });
+        box.appendChild(lab);
+      });
+      $('#onb-maa', m).value = rows[0].dir;
+      probe();
+    } catch (e) {
+      box.innerHTML = `<span class="onb-hint bad">检测失败：${esc(e.message)}</span>`;
+    }
+  };
+  loadProcs();
+  $('#onb-procs-refresh', m).addEventListener('click', loadProcs);
+
   $('#onb-pick', m).addEventListener('click', async () => {
     const input = $('#onb-maa', m);
     await pickFolder(input);
     if (input.value.trim()) probe();
   });
   $('#onb-probe', m).addEventListener('click', probe);
+  $('#onb-next', m).addEventListener('click', async () => {
+    const dir = $('#onb-maa', m).value.trim();
+    if (!dir) { toast('先选好 MAA 根目录，或点「稍后设置」', 'warn'); $('#onb-maa', m).focus(); return; }
+    const ok = await probe();
+    if (!ok || !ok.exeExists) { toast('MAA 目录没通过检测，改一下再试', 'err'); return; }
+    showPage(2);
+    setTimeout(() => { const t = $('#onb-token', m); if (t && !t.value.trim()) t.focus(); }, 80);
+  });
+  $('#onb-back', m).addEventListener('click', () => showPage(1));
   $('#onb-skip', m).addEventListener('click', () => {
     close();
     if (!S.accounts.length) setTimeout(openAddAccount, 200);
+  });
+
+  // 内置登录：小窗里登录成功 → 后端嗅探并验证 token → 自动回填
+  const loginState = $('#onb-login-state', m);
+  const setLoginState = (cls, html) => {
+    loginState.className = 'onb-hint' + (cls ? ' ' + cls : '');
+    loginState.innerHTML = html;
+  };
+  $('#onb-login-btn', m).addEventListener('click', async () => {
+    const btn = $('#onb-login-btn', m);
+    btn.disabled = true;
+    btn.textContent = '登录窗口已打开…';
+    try {
+      await api('/api/skland/login', {});
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = '打开登录窗口';
+      setLoginState('bad', '✗ ' + esc(e.message));
+      return;
+    }
+    setLoginState('', '在弹出的森空岛小窗里登录，成功后会自动验证 token、关掉小窗并填到下方。');
+    stopLoginPoll();
+    loginTimer = setInterval(async () => {
+      let st;
+      try { st = await api('/api/skland/login/status'); } catch (e) { return; }
+      if (st.phase === 'verifying') {
+        setLoginState('', '已捕获请求，正在验证 token…');
+      } else if (st.phase === 'done' && st.token) {
+        stopLoginPoll();
+        $('#onb-token', m).value = st.token;
+        btn.disabled = false;
+        btn.textContent = '再抓一次';
+        setLoginState('ok', '✓ token 已验证并填好，直接点「保存并同步账号」。');
+        toast('森空岛 token 已自动获取');
+      } else if (st.phase === 'failed') {
+        stopLoginPoll();
+        btn.disabled = false;
+        btn.textContent = '打开登录窗口';
+        setLoginState('bad', '✗ ' + esc(st.error || '内置登录出错') + '，也可以在下面手动粘贴 token。');
+      } else if (st.phase === 'closed') {
+        stopLoginPoll();
+        btn.disabled = false;
+        btn.textContent = '打开登录窗口';
+        setLoginState('', '登录窗口已关闭。没抓到的话重新打开，或在下面手动粘贴。');
+      }
+    }, 900);
   });
 
   $('#onb-go', m).addEventListener('click', async () => {
     const token = $('#onb-token', m).value.trim();
     const alias = $('#onb-alias', m).value.trim();
     const maaDir = $('#onb-maa', m).value.trim();
-    if (!token) { toast('先把森空岛 token 粘进来', 'warn'); $('#onb-token', m).focus(); return; }
-    if (!maaDir) { toast('把 MAA 根目录填上，或者点「稍后设置」', 'warn'); $('#onb-maa', m).focus(); return; }
+    if (!token) { toast('先把森空岛 token 粘进来，或用上方内置登录自动抓取', 'warn'); $('#onb-token', m).focus(); return; }
+    if (!maaDir) { toast('把 MAA 根目录填上，或者点「稍后设置」', 'warn'); showPage(1); return; }
     const ok = await probe();
-    if (!ok || !ok.exeExists) { toast('MAA 目录没通过检测，改一下再试', 'err'); return; }
+    if (!ok || !ok.exeExists) { toast('MAA 目录没通过检测，改一下再试', 'err'); showPage(1); return; }
 
     const btn = $('#onb-go', m);
     btn.disabled = true;
@@ -1340,7 +1467,8 @@ function openOnboarding() {
     }
   });
 
-  setTimeout(() => { const t = $('#onb-token', m); if (t) t.focus(); }, 80);
+  showPage(1);
+  setTimeout(() => { $('#onb-maa', m).focus(); }, 80);
 }
 
 /* ------------------------------------------------------------ 设置 */
