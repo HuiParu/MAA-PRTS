@@ -91,11 +91,12 @@ for /d %%D in (
 )
 
 echo [错误] 未找到 Python 3.10 或更高版本。
-echo 请从 https://www.python.org/downloads/windows/ 安装 Python，并勾选 Add python.exe to PATH。
+echo Download: https://www.python.org/downloads/windows/
+echo 安装时请勾选 Add python.exe to PATH。
 exit /b 1
 
 
-rem 一次调用完成版本检查和定位：版本达标输出解释器路径，否则静默退出 1。
+rem One call for both: print the interpreter path if version >= 3.10, else exit 1 quietly.
 :TryPython
 set "PYTHON="
 for /f "delims=" %%I in ('%* -c "import sys; sys.exit(1) if sys.version_info < (3, 10) else print(sys.executable)" 2^>nul') do set "PYTHON=%%I"
