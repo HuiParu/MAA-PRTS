@@ -6,8 +6,9 @@
 产物：build/MAA-PRTS/MAA-PRTS.exe（整个文件夹即发布包，拷走即用）
 构建只写 build/ 一个目录；中间产物放 build/work/，成功后自动删掉。
 
-打包只带只读资源（frontend / resources）。用户数据永远写在 exe 所在
-项目根目录的 config/（含加密 token 与账号练度），不会被打进包里。
+打包只带只读资源（frontend / resources）。用户数据永远写在 exe 同目录的
+config/（含加密 token 与账号练度），不会被打进包里；程序任何模式下都不向上
+找目录。压缩发版请用全新构建产物（运行过会多出 config/、debug/）。
 """
 from __future__ import annotations
 
