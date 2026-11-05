@@ -50,8 +50,15 @@ def _stages():
         p = pack()
         zones = p.get('zones') or {}
         acts = p.get('activities') or {}
+        raw = p.get('stages') or []
+        all_ids = {st['id'] for st in raw}
         rows = []
-        for st in p.get('stages') or []:
+        for st in raw:
+            # #f# 是突袭版、#s 是简单版，都跟主关共用关卡代号。作业站只认主关 id，
+            # 把它们也列出来只会得到「同一个代号两行、第二行永远没作业」，
+            # 所以这里直接跳过，突袭能力用 raid 标记挂在主关上。
+            if '#' in st['id']:
+                continue
             zid = st.get('zone') or ''
             zone = zones.get(zid) or {}
             # 活动正式名：stage id 前缀就是 act 编号（act55side_10 → act55side）
@@ -65,6 +72,7 @@ def _stages():
                 'zoneName': zone.get('name') or '',
                 'zoneType': zone.get('type') or '',
                 'activity': act.get('name') or '',
+                'raid': (st['id'] + '#f#') in all_ids,
                 'difficulty': '',
                 'danger': '',
             })
@@ -84,6 +92,8 @@ def resolve(keyword: str) -> dict:
     支持：TL-10 / act55side_10 / TR- / act55side / 中文关卡名 / 中文活动名
     """
     kw = (keyword or '').strip()
+    # 有人会直接粘 stage id（act13side_ex01#f# / main_15-02#s），回落到主关
+    kw = re.sub(r'#(?:f#|s)$', '', kw, flags=re.I)
     if not kw:
         return {'mode': 'unknown', 'title': '', 'keyword': kw, 'stages': []}
 

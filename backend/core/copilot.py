@@ -29,6 +29,47 @@ MAX_LEVELS = {0: (30, 0, 0), 1: (30, 0, 0), 2: (30, 0, 0), 3: (40, 55, 0),
 MODES = ('ready', 'borrow', 'train', 'blocked')
 MODE_CN = {'ready': '可直接抄', 'borrow': '差一人可借', 'train': '需补练度', 'blocked': '打不了'}
 
+# 作业里的 difficulty 字段是位标志（MAA CopilotModel.DifficultyFlags）：
+#   0/缺失 = 未标注（MAA 按普通处理）、1 = 普通、2 = 突袭、3 = 普通与突袭兼容
+DIFF_NORMAL, DIFF_RAID = 1, 2
+DIFF_CN = {DIFF_NORMAL: '普通', DIFF_RAID: '突袭', DIFF_NORMAL | DIFF_RAID: '通用'}
+
+
+def difficulty_flags(content) -> int:
+    """把作业的 difficulty 规范成位标志：至少含普通或突袭之一"""
+    try:
+        raw = int((content or {}).get('difficulty') or 0)
+    except (TypeError, ValueError):
+        raw = 0
+    if raw <= 0:                      # 老作业没有这个字段，按普通算（跟 MAA 一致）
+        return DIFF_NORMAL
+    flags = 0
+    if raw & DIFF_NORMAL:
+        flags |= DIFF_NORMAL
+    if raw & DIFF_RAID:
+        flags |= DIFF_RAID
+    return flags or DIFF_NORMAL
+
+
+def difficulty_text(flags: int) -> str:
+    return DIFF_CN.get(flags, '普通')
+
+
+def entry_variants(flags: int, variant=None) -> list:
+    """作业集条目在 MAA 里要写成哪几条（返回 IsRaid 列表）
+
+    variant='normal'/'raid' 是从「普通 / 突袭」那一行加的，只写对应那一条；
+    不带 variant（卡片、详情弹窗）沿用 MAA 的做法，按作业自身的难度标志展开。
+    """
+    if variant == 'normal' and flags & DIFF_NORMAL:
+        return [False]
+    if variant == 'raid' and flags & DIFF_RAID:
+        return [True]
+    out = [False] if flags & DIFF_NORMAL else []
+    if flags & DIFF_RAID:
+        out.append(True)
+    return out
+
 _cache = {}
 _cache_lock = threading.Lock()
 CACHE_TTL = 600
@@ -243,7 +284,8 @@ def fetch_ops(stage, pages=2, min_rating=0, force=False):
         if hit and not force and now - hit[0] < CACHE_TTL:
             return hit[1]
 
-    only = lambda rows: [r for r in rows if (r['content'].get('stage_name') or '') == sid]
+    only = lambda rows: [r for r in rows
+                         if (r['content'].get('stage_name') or '') in (sid, code)]
 
     # TR / 塔关等 id 作业站不认，直接用代号搜；其余先按 id 查
     direct_by_code = sid.startswith(('tr_', 'lt_'))
@@ -265,6 +307,7 @@ def _item(stage, item, mode, missing, training, total, detail):
     meta = item['meta']
     content = item['content']
     doc = content.get('doc') or {}
+    flags = difficulty_flags(content)
     return {
         'id': meta.get('id'),
         'copilotId': meta.get('id'),
@@ -275,6 +318,8 @@ def _item(stage, item, mode, missing, training, total, detail):
         'uploader': meta.get('uploader') or doc.get('uploader') or '',
         'total': total,
         'mode': mode,
+        'difficulty': flags,
+        'difficultyText': difficulty_text(flags),
         'missing': missing,
         'training': training,
         'opers': detail,
@@ -290,22 +335,55 @@ def rank_key(row):
     return (MODES.index(row['mode']), -row['rating'], row['total'], -row['views'])
 
 
-def match_stage(stage, owned_map, pages=2, min_rating=0, limit=12):
+def _collect_rows(stage, owned_map, pages=2, min_rating=0):
+    """拉一个关卡的全部作业并打分（不截断，供普通/突袭两行共用）"""
     items = fetch_ops(stage, pages=pages, min_rating=min_rating)
     rows = []
     for it in items:
         mode, missing, training, total, detail = match_operation(it['content'], owned_map)
         rows.append(_item(stage, it, mode, missing, training, total, detail))
     rows.sort(key=rank_key)
+    return rows
+
+
+def _pack_stage(stage, rows, limit=12):
     counts = {m: sum(1 for r in rows if r['mode'] == m) for m in MODES}
-    best = rows[0] if rows else None
     return {
         'stage': stage,
         'total': len(rows),
         'counts': counts,
-        'best': best,
+        'best': rows[0] if rows else None,
         'ops': rows[:limit],
     }
+
+
+def match_stage(stage, owned_map, pages=2, min_rating=0, limit=12, variant=None):
+    """variant: None 不区分 / 'normal' 只要普通可用 / 'raid' 只要突袭可用
+
+    宽度 3（普通+突袭通用）的作业两边都算。
+    """
+    rows = _collect_rows(stage, owned_map, pages=pages, min_rating=min_rating)
+    if variant == 'normal':
+        rows = [r for r in rows if r['difficulty'] & DIFF_NORMAL]
+    elif variant == 'raid':
+        rows = [r for r in rows if r['difficulty'] & DIFF_RAID]
+    return _pack_stage(stage, rows, limit=limit)
+
+
+def stage_variants(stage, rows, limit=12):
+    """把一个关卡的作业拆成展示行
+
+    有突袭版的关卡拆两行：普通一行、突袭一行，通用作业（difficulty=3）两边都出现；
+    没有突袭版的关卡只有一行（variant 固定 normal，作业集据此只写普通那一条）。
+    """
+    if not stage.get('raid'):
+        return [_pack_stage(dict(stage, variant='normal'), rows, limit=limit)]
+    return [
+        _pack_stage(dict(stage, variant='normal'),
+                    [r for r in rows if r['difficulty'] & DIFF_NORMAL], limit=limit),
+        _pack_stage(dict(stage, variant='raid'),
+                    [r for r in rows if r['difficulty'] & DIFF_RAID], limit=limit),
+    ]
 
 
 def search(keyword, snap, pages=2, min_rating=0, limit=12):
@@ -318,7 +396,7 @@ def search(keyword, snap, pages=2, min_rating=0, limit=12):
             return {'mode': 'unknown', 'title': '', 'keyword': keyword, 'stages': []}
         sid = pool[0]['content']['stage_name']
         stage = {'stageId': sid, 'code': keyword.strip().upper(), 'name': '',
-                 'zoneId': '', 'zoneName': ''}
+                 'zoneId': '', 'zoneName': '', 'raid': sid.endswith('#f#')}
         res = {'mode': 'stage', 'title': '%s（%s）' % (keyword, sid),
                'keyword': keyword, 'stages': [stage]}
 
@@ -326,11 +404,18 @@ def search(keyword, snap, pages=2, min_rating=0, limit=12):
     stages = res['stages']
     workers = min(8, max(1, len(stages)))
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        results = list(ex.map(
-            lambda s: match_stage(s, owned, pages=pages, min_rating=min_rating, limit=limit),
+        collected = list(ex.map(
+            lambda s: (s, _collect_rows(s, owned, pages=pages, min_rating=min_rating)),
             stages))
 
-    results.sort(key=lambda r: (r['stage'].get('stageId') or ''))
+    # 有突袭版的关卡拆成两行：普通一行、突袭一行，通用作业（difficulty=3）
+    # 在两边都出现；没有突袭版的关卡只有一行。
+    results = []
+    for s, rows in collected:
+        results.extend(stage_variants(s, rows, limit=limit))
+
+    results.sort(key=lambda r: (r['stage'].get('stageId') or '',
+                                r['stage'].get('variant') == 'raid'))
     return {
         'mode': res['mode'],
         'title': res['title'],
