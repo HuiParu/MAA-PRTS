@@ -15,6 +15,7 @@
        - tokens.json 多账号读写、去重、备注保留
        - 旧明文 tokens.txt（三种写法）自动迁移
        - 坏密文自愈：改名 .broken 重建空列表，警告可读
+       - 作业 json 交给 MAA 前的修正（非法样本必须被修成 MaaCore 能解析的样子）
     C. 启动冒烟（临时项目副本）
        - backend/main.py --no-window 拉起，解析实际端口
        - 只读接口 /api/ping、/api/bootstrap、/api/gamedata 返回 200
@@ -172,6 +173,108 @@ def check_tokens_selfheal(tmp):
     assert '重新粘贴' in accounts.TOKENS_WARNING, '警告信息缺失'
 
 
+def _assert_maa_parsable(content):
+    """按 MaaCore CopilotConfig::parse 的致命校验复检，非法就抛 AssertionError
+
+    对应 src/MaaCore/Config/Miscellaneous/CopilotConfig.cpp：
+      parse_basic_info  读 stage_name
+      parse_oper_usage  skill / skill_level / module 推出的精英要求 > 声明的 elite 直接判错
+      parse_actions     Click 必须给 rect 或 location，Swipe 必须给 begin 与 end
+    """
+    from core import copilot
+
+    assert content.get('stage_name'), 'stage_name 缺失'
+    idx = copilot._char_index()
+    opers = list(content.get('opers') or [])
+    for g in (content.get('groups') or []):
+        opers.extend(g.get('opers') or [])
+    for op in opers:
+        hit = idx.get(op.get('name') or '')
+        if not hit:                       # MAA 查不到干员时跳过检查
+            continue
+        need = max(int(op.get('skill') or 0) - 1, 0)
+        req = op.get('requirements') or {}
+        sl = req.get('skill_level')
+        if sl is not None:
+            need = max(2 if int(sl) > 7 else (1 if int(sl) > 4 else 0), need)
+        mod = req.get('module')
+        if mod is not None and int(mod) > 0:
+            need = max(2, need)
+        if 'elite' in req and need > int(req.get('elite') or 0):
+            raise AssertionError('干员 %s 需要精%d，但作业写的是精%s'
+                                 % (op.get('name'), need, req.get('elite')))
+    for a in (content.get('actions') or []):
+        if a.get('type') == 'Click' and 'rect' not in a and 'location' not in a:
+            raise AssertionError('Click 动作缺 rect/location')
+        if a.get('type') == 'Swipe' and ('begin' not in a or 'end' not in a):
+            raise AssertionError('Swipe 动作缺 begin/end')
+
+
+def check_copilot_normalize():
+    """作业站原始 json 常带非法练度要求，MaaCore 会 parse failed（作业集整体起不来）。
+
+    这里造一份必然被 MaaCore 拒收的样本，断言 normalize_for_maa 能修成合法，
+    并且修的是副本、不动调用方手里那份。
+    """
+    from core import copilot, resources
+
+    chars = list((resources.char_table() or {}).values())
+    low = next((c['name'] for c in chars if int(c.get('rarity') or 0) == 0), None)
+    mid = next((c['name'] for c in chars if int(c.get('rarity') or 0) == 3), None)
+    assert low and mid, '资源包里找不到一星/四星干员，无法构造样本'
+
+    content = {
+        'stage_name': 'smoke_01',
+        'opers': [
+            # 四星、技能 1、技能等级 7 → 需要精一，但写的是精 0（真实踩过的坑）
+            {'name': mid, 'skill': 1, 'requirements': {'elite': 0, 'level': 45, 'skill_level': 7}},
+            # 一星，没有技能 1
+            {'name': low, 'skill': 1},
+        ],
+        'groups': [
+            # 技能专精九级 → 需要精二
+            {'name': 'g1', 'opers': [
+                {'name': mid, 'skill': 2, 'requirements': {'elite': 0, 'skill_level': 9}}]},
+        ],
+        'actions': [
+            {'type': 'Deploy', 'name': mid, 'location': [1, 2], 'direction': 'Right'},
+            {'type': 'Skill', 'name': mid, 'location': [1, 2]},          # 名与坐标同时给
+            {'type': 'Click'},                                           # 缺 rect/location
+            {'type': 'Swipe', 'begin': [1, 2]},                          # 缺 end
+            {'type': 'Click', 'rect': [0, 0, 10, 10], 'location': [1, 2]},
+            {'type': 'UnknownType'},                                     # Core 直接跳过
+        ],
+        'doc': {'title': 'smoke'},
+    }
+
+    try:
+        _assert_maa_parsable(content)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError('样本本身应当是 MaaCore 不接受的，测试失去意义')
+
+    fixed, notes = copilot.normalize_for_maa(content)
+    assert notes, '修正过程没有留下任何说明'
+    _assert_maa_parsable(fixed)
+
+    assert fixed['opers'][0]['requirements']['elite'] == 1, fixed['opers'][0]
+    assert fixed['opers'][1]['skill'] == 0, '一星的技能 1 应被清成 0'
+    assert fixed['groups'][0]['opers'][0]['requirements']['elite'] == 2
+
+    types = [a.get('type') for a in fixed['actions']]
+    assert types == ['Deploy', 'Skill', 'Click', 'UnknownType'], types
+    skill = fixed['actions'][1]
+    assert 'name' not in skill and 'role' not in skill, '名与坐标同时给时该清掉名字'
+    click = fixed['actions'][2]
+    assert 'rect' in click and 'location' not in click, 'rect 与 location 同时给时该只留 rect'
+    assert fixed['actions'][0].get('name') == mid, 'Deploy 的干员名不该被清'
+
+    # 深拷贝：调用方手里的原始内容不能被改
+    assert content['opers'][0]['requirements']['elite'] == 0
+    assert len(content['actions']) == 6
+
+
 # ---------------------------------------------------------------- C. 启动冒烟
 def _copy_project(tmp):
     ignore = shutil.ignore_patterns(
@@ -276,6 +379,7 @@ def main():
         r.check('B4 旧 tokens.txt 自动迁移', lambda: check_tokens_migration(tmp))
         r.check('B5 坏密文自愈（.broken + 警告）', lambda: check_tokens_selfheal(tmp))
         r.check('B6 畸形旧 txt 留证并警告', lambda: check_tokens_bad_txt(tmp))
+        r.check('B7 作业 json 修正后 MaaCore 可解析', check_copilot_normalize)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
