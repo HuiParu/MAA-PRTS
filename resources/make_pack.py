@@ -33,7 +33,7 @@ def load(path, default=None):
         return default
 
 
-def build(excel_dir, subprof_path=None):
+def build(excel_dir, subprof_path=None, base_path=None):
     chars_src = load(os.path.join(excel_dir, 'character_table.json')) or {}
     patch = (load(os.path.join(excel_dir, 'char_patch_table.json')) or {}).get('patchChars') or {}
     skills_src = load(os.path.join(excel_dir, 'skill_table.json')) or {}
@@ -108,10 +108,14 @@ def build(excel_dir, subprof_path=None):
             'end': int(a.get('endTime') or 0),
         }
 
-    # 分支中文名没有官方静态表，只能从森空岛接口学；把已学到的带进包里当种子
+    # 分支中文名没有官方静态表，只能从森空岛接口学；把已学到的带进包里当种子。
+    # 两处来源叠加：先继承旧包里已有的（程序跑久了攒下来的），再用运行时缓存覆盖。
+    # 运行时缓存不存在时（新装、清过配置）就靠旧包兜底，不会把 73 条种子清零。
     subprof = {}
+    if base_path and os.path.isfile(base_path):
+        subprof.update((load(base_path) or {}).get('subProfessions') or {})
     if subprof_path and os.path.isfile(subprof_path):
-        subprof = load(subprof_path) or {}
+        subprof.update(load(subprof_path) or {})
 
     counts = {
         'chars': len(chars),
@@ -147,14 +151,28 @@ def build(excel_dir, subprof_path=None):
     }
 
 
+def _default_subprof(root):
+    """找运行时学到的分支名缓存：新路径在前，旧版目录兜底"""
+    for rel in (('config', 'skland', 'subprof_cache.json'), ('skland', 'subprof_cache.json')):
+        p = os.path.join(root, *rel)
+        if os.path.isfile(p):
+            return p
+    return os.path.join(root, 'config', 'skland', 'subprof_cache.json')
+
+
 def main(argv=None):
+    root = os.path.dirname(HERE)
     ap = argparse.ArgumentParser(description='生成内置游戏资源包')
     ap.add_argument('--excel', required=True, help='ArknightsGameResource/gamedata/excel 目录')
     ap.add_argument('--out', default=os.path.join(HERE, 'arknights.json'))
-    ap.add_argument('--subprof', default=os.path.join(os.path.dirname(HERE), 'skland', 'subprof_cache.json'))
+    ap.add_argument('--subprof', default=None,
+                    help='分支名缓存（默认自动找 config/skland/subprof_cache.json）')
     args = ap.parse_args(argv)
 
-    pack = build(args.excel, args.subprof)
+    subprof_path = args.subprof or _default_subprof(root)
+    old = load(args.out) or {}
+    old_counts = old.get('counts') or {}
+    pack = build(args.excel, subprof_path, base_path=args.out)
     os.makedirs(os.path.dirname(args.out) or '.', exist_ok=True)
     tmp = args.out + '.tmp'
     with io.open(tmp, 'w', encoding='utf-8') as f:
@@ -163,8 +181,34 @@ def main(argv=None):
 
     size = os.path.getsize(args.out) / 1024 / 1024
     print('已生成：%s（%.2f MB）' % (args.out, size))
+    if os.path.isfile(subprof_path):
+        print('  分支名缓存：%s' % subprof_path)
+    else:
+        print('  分支名缓存：无（沿用旧包里的 %d 条）' % len(pack['subProfessions']))
+
+    # 逐项和旧包对比：条数只该增不减，变少多半是资源库没更新
+    lost = []
     for k, v in pack['counts'].items():
-        print('  %-16s %d' % (k, v))
+        old_v = old_counts.get(k)
+        if old_v is None:
+            mark = '新增'
+        elif v > old_v:
+            mark = '+%d' % (v - old_v)
+        elif v < old_v:
+            mark = '%+d  <- 变少' % (v - old_v)
+            lost.append(k)
+        else:
+            mark = '持平'
+        print('  %-16s %-6d %s' % (k, v, mark))
+
+    if lost:
+        print('')
+        print('[警告] 这些字段比旧包少：%s' % '、'.join(lost))
+        print('       资源库很可能是旧的，先 cd 到 ArknightsGameResource 执行 git pull 再跑一次。')
+        return 2
+    if old_counts:
+        print('')
+        print('校验通过：各项条数没有变少')
     return 0
 
 

@@ -40,5 +40,8 @@ desktop.ini
 # 临时截图
 shot-*.png
 
+# 资源包更新前的自动备份（更新资源数据.bat 生成）
+resources/*.bak
+
 # 发布打包临时目录（只锚定根目录，别误伤 tools/release 模板）
 /release/
