@@ -38,10 +38,12 @@ def _account_for(file):
 def bootstrap(_q, _body):
     st = settings.load()
     accs = accounts.list_accounts()
-    status = maa.status()
+    # 状态卡按「上次账号」绑定的 MAA 展示（没绑定就是全局默认）
+    status = maa.status(_maa_dir_for(st.get('lastAccount')))
     acts = resources.activity_list(18)
+    sv = _settings_view(st, accs)
     return {
-        'settings': {k: st[k] for k in ('maaDir', 'profile', 'autoStartMaa')},
+        'settings': {k: sv[k] for k in ('maaDir', 'maaDirs', 'autoStartMaa')},
         'accounts': accs,
         'lastAccount': _account_for_last(st, accs),
         'maa': status,
@@ -71,11 +73,40 @@ def _account_for_last(st, accs):
     return accs[0]['file'] if accs else ''
 
 
+def _maa_dir_for(file):
+    """账号绑定的 MAA 根目录（账号 json 的 maa.dir）；
+    没绑定、账号读不到就回退全局默认 settings.maaDir。"""
+    if file:
+        try:
+            snap = accounts.get_account(file)
+            d = settings._norm_dir((snap.get('maa') or {}).get('dir') or '')
+            if d:
+                return d
+        except Exception:
+            pass
+    return settings.load()['maaDir']
+
+
+def _settings_view(st, accs):
+    """settings 视图：maaDirs = 保存历史 ∪ 各账号绑定的目录。
+    「已存过」的真实语义是「用过的 MAA」——老版本只存历史时会漏掉
+    已绑定进账号的目录，这里纯读合并（顺带路径归一），不写盘。"""
+    dirs, seen = [], set()
+    for d in list(st.get('maaDirs') or []) + [a.get('maaDir') or '' for a in accs]:
+        d = settings._norm_dir(d)
+        if d and os.path.normcase(d) not in seen:
+            seen.add(os.path.normcase(d))
+            dirs.append(d)
+    out = dict(st)
+    out['maaDirs'] = dirs
+    return out
+
+
 def api_settings(_q, body):
     patch = body or {}
-    st = settings.save(patch)
-    status = maa.status()
-    return {'settings': st, 'maa': status}
+    st = settings.save(patch) if patch else settings.load()
+    status = maa.status(_maa_dir_for(st.get('lastAccount')))
+    return {'settings': _settings_view(st, accounts.list_accounts()), 'maa': status}
 
 
 def api_accounts(_q, _body):
@@ -89,7 +120,13 @@ def api_account(q, _body):
 
 def api_account_maa(_q, body):
     body = body or {}
-    return {'maa': accounts.save_maa_meta(body['file'], body.get('patch') or {})}
+    patch = dict(body.get('patch') or {})
+    if 'dir' in patch:
+        # 路径归一后落盘；绑定的新 MAA 同时并入「已存过」历史
+        patch['dir'] = settings._norm_dir(patch.get('dir') or '')
+        if patch['dir']:
+            settings.remember_maa_dir(patch['dir'])
+    return {'maa': accounts.save_maa_meta(body['file'], patch)}
 
 
 def api_account_remove(_q, body):
@@ -149,8 +186,9 @@ def api_op(q, _body):
     }
 
 
-def api_maa_status(_q, _body):
-    return maa.status()
+def api_maa_status(q, _body):
+    """带 file 参数时返回该账号绑定的 MAA 的状态，否则全局默认"""
+    return maa.status(_maa_dir_for(q.get('file')))
 
 
 def api_maa_running(_q, _body):
@@ -194,12 +232,15 @@ def api_maa_probe(q, _body):
     }
 
 
-def api_maa_close(_q, _body):
-    return {'closed': maa.close(), 'running': maa.is_running()}
+def api_maa_close(q, body):
+    body = body or {}
+    d = _maa_dir_for(q.get('file') or body.get('file'))
+    return {'closed': maa.close(d), 'running': bool(maa.running_in(d))}
 
 
-def api_maa_open(_q, _body):
-    return {'started': maa.launch()}
+def api_maa_open(q, body):
+    body = body or {}
+    return {'started': maa.launch(_maa_dir_for(q.get('file') or body.get('file')))}
 
 
 def api_maa_apply(_q, body):
@@ -209,16 +250,19 @@ def api_maa_apply(_q, body):
         raise ValueError('作业集是空的')
     tid = maa.start_apply(items, profile=body.get('profile'),
                           mode=body.get('mode') or 'replace',
-                          auto_start=body.get('autoStart', True))
+                          auto_start=body.get('autoStart', True),
+                          maa_dir=_maa_dir_for(body.get('file')))
     return {'taskId': tid}
 
 
-def api_maa_clear(_q, body):
-    return {'cleared': maa.clear_tasklist((body or {}).get('profile'))}
+def api_maa_clear(q, body):
+    body = body or {}
+    return {'cleared': maa.clear_tasklist(body.get('profile'),
+                                          maa_dir=_maa_dir_for(q.get('file') or body.get('file')))}
 
 
 def api_maa_tasklist(q, _body):
-    return maa.tasklist(q.get('profile'))
+    return maa.tasklist(q.get('profile'), maa_dir=_maa_dir_for(q.get('file')))
 
 
 def api_paradox_plan(q, body):

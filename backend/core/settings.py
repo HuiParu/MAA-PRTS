@@ -105,7 +105,7 @@ for _d in (SKLAND_DIR, ACCOUNTS_DIR, CONFIG_DIR, DEBUG_DIR):
 
 DEFAULTS = {
     'maaDir': '',
-    'profile': 'moren',
+    'maaDirs': [],          # 用过的 MAA 根目录历史（添加账号时「已存过」列表的数据源）
     'autoStartMaa': True,
     'lastAccount': '',
 }
@@ -133,6 +133,34 @@ def load() -> dict:
         return dict(data)
 
 
+def _norm_dir(v: str) -> str:
+    """容忍从资源管理器粘来的路径：正反斜杠混用、末尾带斜杠、双斜杠"""
+    v = (v or '').strip().strip('"')
+    if not v:
+        return ''
+    v = os.path.normpath(v.replace('/', '\\'))
+    if v.endswith('\\') and len(v) > 3:
+        v = v.rstrip('\\')
+    return v
+
+
+def _merged_dirs(dirs, extra):
+    """历史目录列表并入一个新目录（过滤脏值，大小写不敏感去重）"""
+    out = [d for d in (dirs or []) if isinstance(d, str) and d]
+    if extra and os.path.normcase(extra) not in {os.path.normcase(d) for d in out}:
+        out.append(extra)
+    return out
+
+
+def remember_maa_dir(d: str) -> None:
+    """把一个 MAA 根目录并入 maaDirs 历史（账号绑定与全局保存共用入口）"""
+    d = _norm_dir(d)
+    if not d:
+        return
+    with _lock:
+        save({'maaDirs': _merged_dirs(load().get('maaDirs'), d)})
+
+
 def save(patch: dict) -> dict:
     global _cache
     with _lock:
@@ -141,13 +169,11 @@ def save(patch: dict) -> dict:
             if k not in DEFAULTS:
                 continue
             if k == 'maaDir':
-                # 容忍从资源管理器粘来的路径：正反斜杠混用、末尾带斜杠、双斜杠
-                v = (v or '').strip().strip('"')
-                if v:
-                    v = os.path.normpath(v.replace('/', '\\'))
-                    if v.endswith('\\') and len(v) > 3:
-                        v = v.rstrip('\\')
+                v = _norm_dir(v)
             cur[k] = v
+        # maaDir 每次保存都并入历史列表（大小写不敏感去重）
+        if cur.get('maaDir'):
+            cur['maaDirs'] = _merged_dirs(cur.get('maaDirs'), cur['maaDir'])
         os.makedirs(CONFIG_DIR, exist_ok=True)
         tmp = SETTINGS_PATH + '.tmp'
         with io.open(tmp, 'w', encoding='utf-8') as f:

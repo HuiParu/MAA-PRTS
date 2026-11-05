@@ -48,6 +48,7 @@ def list_accounts():
             'level': a.get('level'),
             'secretary': a.get('secretary') or {},
             'maaProfile': (snap.get('maa') or {}).get('profile') or '',
+            'maaDir': (snap.get('maa') or {}).get('dir') or '',
             'syncedAt': (snap.get('sync') or {}).get('syncedAt'),
             'stats': {
                 'charCount': s.get('charCount'),
