@@ -354,3 +354,131 @@ def download_content(copilot_id):
     if not c.get('stage_name'):
         raise ValueError('作业 #%s 内容不完整' % copilot_id)
     return c
+
+
+# ---------------------------------------------------------------- 交给 MAA 前修正
+# 作业站的原始 json 里经常有「技能选择与稀有度不匹配」「精英要求填 0 但技能等级
+# 要求精一」这类历史遗留问题。MAA 桌面端在「添加作业」时会自己修一遍再存盘，
+# 而 MaaCore 解析时会直接判错退出（日志：CopilotConfig parse failed），表现就是
+# 「作业启动失败 / 读取文件失败！」。这里把 MAA 桌面端那套修正复刻一遍。
+#
+# 规则来源（v6.21.4）：
+#   MaaWpfGui/ViewModels/UI/CopilotViewModel.cs  ParseCopilotAsync
+#   MaaCore/Config/Miscellaneous/CopilotConfig.cpp  parse_oper_usage / parse_actions
+_CHAR_INDEX = {'key': None, 'map': None}
+
+
+def _char_index() -> dict:
+    """干员名 → (星级 1~6, charId)。同名多形态取稀有度最高的那个，与 MAA 一致。"""
+    pack = resources.pack()
+    key = (pack.get('version'), pack.get('fingerprint'))
+    if _CHAR_INDEX['map'] is not None and _CHAR_INDEX['key'] == key:
+        return _CHAR_INDEX['map']
+
+    idx = {}
+    for cid, c in (pack.get('chars') or {}).items():
+        name = c.get('name')
+        if not name:
+            continue
+        stars = int(c.get('rarity') or 0) + 1     # 资源包里 rarity 是 0 起（0 = 一星）
+        old = idx.get(name)
+        if old is None or stars > old[0]:
+            idx[name] = (stars, cid)
+    _CHAR_INDEX['map'] = idx
+    _CHAR_INDEX['key'] = key
+    return idx
+
+
+_ACTION_SKILL_TYPES = ('Skill', 'Retreat', 'BulletTime', 'SkillUsage')
+
+
+def _fix_oper(op, idx, notes):
+    """修正单个干员条目，返回 False 表示条目本身不可用"""
+    if not isinstance(op, dict) or not op.get('name'):
+        return True
+
+    name = op.get('name')
+    hit = idx.get(name)
+    if not hit:
+        return True                     # 查不到（装置、召唤物）→ MAA 也会跳过检查
+    stars, cid = hit
+
+    skill = int(op.get('skill') or 0)
+    bad = ((skill == 3 and stars < 6 and cid != 'char_002_amiya')
+           or (skill == 2 and stars < 4)
+           or (skill == 1 and stars < 3))
+    if bad:
+        notes.append('%s 是 %d 星，没有技能 %d，已按 0 处理' % (name, stars, skill))
+        op['skill'] = 0
+        skill = 0
+
+    req = op.get('requirements')
+    need = max(skill - 1, 0)
+    if isinstance(req, dict):
+        sl = req.get('skill_level')
+        if sl is not None:
+            sl = int(sl)
+            if sl > 7:
+                need = max(2, need)     # 专精要求精二
+            elif sl > 4:
+                need = max(1, need)     # 7 级技能要求精一
+        mod = req.get('module')
+        if mod is not None and int(mod) > 0:
+            need = max(2, need)         # 带模组要求精二
+
+    if need > 0:
+        if not isinstance(req, dict):
+            op['requirements'] = {'elite': need}
+            notes.append('%s 缺练度字段，补上精英 %d' % (name, need))
+        elif int(req.get('elite') or 0) < need:
+            notes.append('%s 精英要求 %s → %d' % (name, req.get('elite'), need))
+            req['elite'] = need
+    return True
+
+
+def _fix_actions(actions, notes):
+    out = []
+    for a in (actions or []):
+        if not isinstance(a, dict):
+            continue
+        t = a.get('type')
+        if t in _ACTION_SKILL_TYPES and a.get('name') is not None and a.get('location'):
+            # 同时给了干员名和坐标时，MAA 按坐标执行，名字会被清掉
+            a.pop('name', None)
+            a.pop('role', None)
+        if t == 'Click':
+            if 'rect' in a and 'location' in a:
+                a.pop('location', None)     # Core 按 rect 执行
+            elif 'rect' not in a and 'location' not in a:
+                notes.append('丢弃缺少 rect/location 的点击动作')
+                continue
+        if t == 'Swipe' and ('begin' not in a or 'end' not in a):
+            notes.append('丢弃缺少 begin/end 的滑动动作')
+            continue
+        out.append(a)
+    return out
+
+
+def normalize_for_maa(content):
+    """把作业站原始 json 修成 MaaCore 能解析的样子，返回 (新 json, 修正说明列表)"""
+    c = json.loads(json.dumps(content, ensure_ascii=False))   # 深拷贝，不动缓存里那份
+    idx = _char_index()
+    notes = []
+
+    opers = list(c.get('opers') or [])
+    for g in (c.get('groups') or []):
+        if isinstance(g, dict):
+            opers.extend(g.get('opers') or [])
+    for op in opers:
+        _fix_oper(op, idx, notes)
+
+    c['actions'] = _fix_actions(c.get('actions'), notes)
+
+    # MaaCore 里 actions 是必读字段，opers/groups 缺失时 MAA 桌面端会空引用
+    c.setdefault('opers', [])
+    c.setdefault('groups', [])
+    if not isinstance(c.get('doc'), dict):
+        c['doc'] = {}
+    if not c.get('stage_name'):
+        raise ValueError('作业缺少 stage_name')
+    return c, notes
