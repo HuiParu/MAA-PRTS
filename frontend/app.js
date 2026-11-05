@@ -394,6 +394,18 @@ function stars(n) {
 
 const MODE_CN = { ready: '可直接抄', borrow: '差一人可借', train: '需补练度', blocked: '打不了' };
 
+/* 难度：1 普通、2 突袭、3 普通+突袭兼容（作业里 difficulty 位标志，冗余 0/缺失 视为普通）。
+   EX 关才谈得上突袭，其它关卡即使标了普通也不显眼地摆个徽标。 */
+function difficultyTag(op, code) {
+  const f = Number(op.difficulty) || 1;
+  const c = String(code || op.stageCode || '');
+  if (f === 1 && !/-EX-|_ex\d|EX-\d/i.test(c)) return '';
+  const cls = f === 2 ? 'raid' : (f === 3 ? 'both' : 'normal');
+  const txt = op.difficultyText || (f === 2 ? '突袭' : (f === 3 ? '通用' : '普通'));
+  const tip = f === 3 ? '这份作业普通与突袭都能用' : (f === 2 ? '只适用于突袭' : '只适用于普通难度');
+  return `<span class="badge diff ${cls}" title="${tip}">${esc(txt)}</span>`;
+}
+
 function opChips(op, max = 8) {
   const list = (op.opers || []).slice();
   const chips = list.slice(0, max).map(o => {
@@ -425,6 +437,7 @@ function opCard(op, opts = {}) {
       <div class="op-title" title="${esc(op.title)}">${esc(op.title)}</div>
       <div class="badges">
         <span class="badge ${mode}">${MODE_CN[mode]}</span>
+        ${difficultyTag(op, op.stageCode)}
         <span class="badge plain">${op.total} 人</span>
         ${op.missing && op.missing.length ? `<span class="badge blocked">缺 ${esc(op.missing.join('、'))}</span>` : ''}
         ${op.training && op.training.length ? `<span class="badge train">练度不足 ${esc(op.training.slice(0, 2).join('、'))}</span>` : ''}
@@ -441,7 +454,7 @@ function opCard(op, opts = {}) {
     </div>`;
 }
 
-function bindOpCards(root, ops) {
+function bindOpCards(root, ops, variant) {
   $$('.op-card', root).forEach(card => {
     const id = Number(card.dataset.op);
     const op = ops.find(o => Number(o.id) === id);
@@ -451,7 +464,7 @@ function bindOpCards(root, ops) {
       if (!btn) { showOpDetail(op); return; }
       const act = btn.dataset.act;
       if (act === 'copy') copyText(op.maaCode, 'MAA 代码已复制');
-      else if (act === 'add') { addToBasket(op); btn.disabled = true; btn.textContent = '已在作业集'; }
+      else if (act === 'add') { addToBasket(op, variant); btn.disabled = true; btn.textContent = '已在作业集'; }
       else if (act === 'detail') showOpDetail(op);
     });
   });
@@ -464,7 +477,7 @@ function renderResult(d) {
     return;
   }
 
-  if (d.mode === 'stage' || d.stages.length === 1) {
+  if (d.stages.length === 1) {
     const s = d.stages[0];
     const ops = s.ops || [];
     const head = `
@@ -484,21 +497,26 @@ function renderResult(d) {
     box.innerHTML = head + '<div class="ops-grid">' +
       ops.map((op, i) => opCard(op, {
         best: i === 0 && op.mode !== 'blocked' && op.mode !== 'train',
-        inBasket: inBasket(op.id),
+        inBasket: inBasket(op.id, s.stage.variant),
       })).join('') + '</div>';
-    bindOpCards(box, ops);
+    bindOpCards(box, ops, s.stage.variant);
     const ab = $('#add-best');
-    if (ab && s.best) ab.addEventListener('click', () => addToBasket(s.best));
+    if (ab && s.best) ab.addEventListener('click', () => addToBasket(s.best, s.stage.variant));
     return;
   }
 
-  // 活动视图
-  const totalOps = d.stages.reduce((n, s) => n + (s.total || 0), 0);
-  const readyStages = d.stages.filter(s => s.best && s.best.mode === 'ready').length;
+  // 活动视图（有突袭版的关卡会拆成「普通」「突袭」两行，通用作业两边都在）
+  const codes = [...new Set(d.stages.map(s => s.stage.code))];
+  const opIds = new Set();
+  d.stages.forEach(s => (s.ops || []).forEach(o => opIds.add(o.id)));
+  const totalOps = opIds.size;
+  const readyStages = codes.filter(code => d.stages.some(s =>
+    s.stage.code === code && s.best && s.best.mode === 'ready')).length;
+  const raidRows = d.stages.filter(s => s.stage.variant === 'raid').length;
   const head = `
     <div class="result-head">
       <div class="result-title">${esc(d.title)}
-        <span>${d.stages.length} 关 · ${totalOps} 份作业 · ${readyStages} 关可直接抄</span>
+        <span>${codes.length} 关 · ${totalOps} 份作业 · ${readyStages} 关可直接抄${raidRows ? ` · ${raidRows} 个突袭关` : ''}</span>
       </div>
       <div class="result-actions">
         <button class="ghost-btn mint" id="add-all-best">全部加入（每关最佳）</button>
@@ -509,10 +527,14 @@ function renderResult(d) {
     const st = s.stage;
     const cls = b ? b.mode : 'blocked';
     const has = (s.ops || []).length;
+    const isRaid = st.variant === 'raid';
+    const variant = st.variant
+      ? `<em class="badge diff ${isRaid ? 'raid' : 'normal'}">${isRaid ? '突袭' : '普通'}</em>`
+      : '';
     return `
-      <div class="stage-row" data-stage="${esc(st.stageId)}">
+      <div class="stage-row${isRaid ? ' is-raid' : ''}" data-stage="${esc(st.stageId)}" data-variant="${esc(st.variant || '')}">
         <div class="stage-main">
-          <div class="stage-code">${esc(st.code)}<small>${esc(st.name || '')}</small></div>
+          <div class="stage-code">${esc(st.code)}<small class="sc-sub">${esc(st.name || '')}${variant}</small></div>
           <div class="stage-mid">
             <div class="stage-best">${b ? esc(b.title) : '（暂无可用作业）'}</div>
             <div class="stage-sub">
@@ -525,7 +547,7 @@ function renderResult(d) {
           </div>
           <div class="stage-right">
             <span class="badge ${cls}">${MODE_CN[cls]}</span>
-            ${b ? `<button class="mini-btn accent" data-add="${b.id}" data-stage="${esc(st.stageId)}" ${inBasket(b.id) ? 'disabled' : ''}>${inBasket(b.id) ? '已在' : '加入'}</button>` : ''}
+            ${b ? `<button class="mini-btn accent" data-add="${b.id}" data-variant="${esc(st.variant || '')}" data-stage="${esc(st.stageId)}" ${inBasket(b.id, st.variant) ? 'disabled' : ''}>${inBasket(b.id, st.variant) ? '已在' : '加入'}</button>` : ''}
           </div>
         </div>
         <div class="stage-ops">
@@ -533,11 +555,12 @@ function renderResult(d) {
             <div class="row-op" data-op="${op.id}">
               <span class="stars" style="width:112px">${stars(op.rating)}</span>
               <span class="badge ${op.mode}">${MODE_CN[op.mode]}</span>
+              ${difficultyTag(op, st.code)}
               <span class="t" title="${esc(op.title)}">${esc(op.title)}</span>
               <span style="font-size:11px;color:var(--text-3)">${op.total} 人</span>
               <button class="mini-btn" data-copy="${esc(op.maaCode)}">复制</button>
-              <button class="mini-btn accent" data-add="${op.id}" data-stage="${esc(st.stageId)}" ${inBasket(op.id) ? 'disabled' : ''}>${inBasket(op.id) ? '已在' : '加入'}</button>
-            </div>`).join('') || '<div style="font-size:12px;color:var(--text-3)">没有作业</div>'}
+              <button class="mini-btn accent" data-add="${op.id}" data-variant="${esc(st.variant || '')}" data-stage="${esc(st.stageId)}" ${inBasket(op.id, st.variant) ? 'disabled' : ''}>${inBasket(op.id, st.variant) ? '已在' : '加入'}</button>
+            </div>`).join('') || `<div style="font-size:12px;color:var(--text-3)">没有${isRaid ? '突袭' : ''}作业</div>`}
         </div>
       </div>`;
   }).join('');
@@ -556,7 +579,13 @@ function renderResult(d) {
   $$('[data-add]', box).forEach(b => b.addEventListener('click', (e) => {
     e.stopPropagation();
     const op = allOps.find(o => Number(o.id) === Number(b.dataset.add));
-    if (op) { addToBasket(op); b.disabled = true; b.textContent = '已在'; }
+    if (!op) return;
+    const v = b.dataset.variant || '';
+    addToBasket(op, v);
+    // 同一份作业在普通/突袭两行各有一组按钮，只置灰对应那一组
+    $$(`[data-add="${op.id}"]`, box).forEach(x => {
+      if ((x.dataset.variant || '') === v) { x.disabled = true; x.textContent = '已在'; }
+    });
   }));
   $$('[data-copy]', box).forEach(b => b.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -569,8 +598,23 @@ function renderResult(d) {
   const all = $('#add-all-best');
   if (all) all.addEventListener('click', () => {
     let n = 0;
+    const seen = new Set();
     d.stages.forEach(s => {
-      if (s.best && !inBasket(s.best.id)) { S.basket.push(s.best); n++; }
+      if (!s.best) return;
+      // 按「关卡 + 难度行」去重：有突袭版的关卡普通、突袭各加一份，
+      // 这样 MAA 里两档都有作业可跑
+      const key = s.stage.stageId + '|' + (s.stage.variant || '');
+      if (seen.has(key) || inBasket(s.best.id, s.stage.variant || undefined)) return;
+      seen.add(key);
+      S.basket.push({
+        id: s.best.id, copilotId: s.best.id, title: s.best.title, rating: s.best.rating,
+        mode: s.best.mode, stageCode: s.best.stageCode || '', stageId: s.best.stageId || '',
+        maaCode: s.best.maaCode,
+        difficulty: Number(s.best.difficulty) || 1,
+        difficultyText: s.best.difficultyText || '普通',
+        variant: s.stage.variant || '',
+      });
+      n++;
     });
     renderBasket();
     toast(n ? `已加入 ${n} 份作业` : '这些作业都已在作业集里', n ? 'ok' : 'warn');
@@ -581,7 +625,7 @@ function renderResult(d) {
 async function showOpDetail(op) {
   const m = modal(`
     <h3>${esc(op.title)}</h3>
-    <div class="sub">作业 #${op.id} · ${esc(op.stageCode || '')} ${esc(op.stageName || '')} · ${op.total} 人 · 评分 ${op.rating}</div>
+    <div class="sub">作业 #${op.id} · ${esc(op.stageCode || '')} ${esc(op.stageName || '')} · ${esc(op.difficultyText || '普通')} · ${op.total} 人 · 评分 ${op.rating}</div>
     <div style="display:flex;gap:8px;margin-bottom:14px">
       <button class="btn-plain" id="copy-code">复制 ${esc(op.maaCode)}</button>
       <button class="btn-solid" id="add-op">加入作业集</button>
@@ -623,27 +667,55 @@ async function showOpDetail(op) {
 }
 
 /* ------------------------------------------------------------ 作业集 */
-function inBasket(id) {
-  return S.basket.some(o => Number(o.id) === Number(id));
+/* variant：'normal' / 'raid' 表示从哪一行加的（只写对应那条）；不传表示不区分 */
+function inBasket(id, variant) {
+  return S.basket.some(o => Number(o.id) === Number(id)
+    && (variant === undefined || (o.variant || '') === (variant || '')));
 }
 
-function addToBasket(op) {
-  if (inBasket(op.id)) { toast('已经在作业集里了', 'warn'); return; }
+function addToBasket(op, variant) {
+  const v = variant || op.variant || '';
+  if (inBasket(op.id, v || undefined)) {
+    toast(v === 'raid' ? '这份作业已经在作业集的突袭里了' : (v === 'normal' ? '这份作业已经在作业集的普通里了' : '已经在作业集里了'), 'warn');
+    return;
+  }
   S.basket.push({
     id: op.id, copilotId: op.id, title: op.title, rating: op.rating,
     mode: op.mode, stageCode: op.stageCode || '', stageId: op.stageId || '',
     maaCode: op.maaCode,
+    difficulty: Number(op.difficulty) || 1,
+    difficultyText: op.difficultyText || '普通',
+    variant: v,
   });
   renderBasket();
   const fab = $('#basket-fab');
   if (fab) { fab.classList.remove('pulse'); void fab.offsetWidth; fab.classList.add('pulse'); }
-  toast('已加入作业集');
+  toast(v === 'raid' ? '已加入作业集（突袭）' : '已加入作业集');
+}
+
+function basketDiffTag(o) {
+  if (o.variant === 'raid') return '<i class="diff-pill raid">突袭</i>';
+  if (o.variant === 'normal') return '<i class="diff-pill normal">普通</i>';
+  const f = Number(o.difficulty) || 1;
+  if (!(f & 2)) return '';
+  const txt = f & 1 ? '普通+突袭' : '突袭';
+  return `<i class="diff-pill ${f & 1 ? 'both' : 'raid'}">${txt}</i>`;
+}
+
+/* 实际写进 MAA 的条数：带 variant 的只写一条，其余按难度标志展开 */
+function basketEntryCount(o) {
+  if (o.variant === 'raid' || o.variant === 'normal') return 1;
+  const f = Number(o.difficulty) || 1;
+  return [1, 2].filter(b => f & b).length;
 }
 
 function renderBasket() {
   const list = $('#basket-list');
   $('#basket-count').textContent = S.basket.length;
-  $('#btn-apply').disabled = S.basket.length === 0;
+  const entries = S.basket.reduce((n, o) => n + basketEntryCount(o), 0);
+  const applyBtn = $('#btn-apply');
+  applyBtn.disabled = S.basket.length === 0;
+  applyBtn.textContent = entries ? `写入 MAA（${entries} 条）` : '写入 MAA 并重启';
   $('#basket-empty').style.display = S.basket.length ? 'none' : 'flex';
   const fab = $('#fab-count');
   if (fab) {
@@ -651,10 +723,10 @@ function renderBasket() {
     fab.hidden = S.basket.length === 0;
   }
   list.innerHTML = S.basket.map((o, i) => `
-    <div class="basket-item" draggable="true" data-id="${esc(o.id)}">
+    <div class="basket-item" draggable="true" data-idx="${i}">
       <span class="drag-dots" title="拖动调整顺序">⠿</span>
       <span class="basket-idx">${i + 1}</span>
-      <span class="basket-code">${esc(o.stageCode || o.id)}</span>
+      <span class="basket-code">${esc(o.stageCode || o.id)}${basketDiffTag(o)}</span>
       <span class="basket-name" title="${esc(o.title)}">${esc(o.title)}</span>
       <button class="icon-btn small" data-del="${i}" title="移除">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
@@ -676,7 +748,7 @@ function bindBasketDrag(list) {
       _dragEl = el;
       el.classList.add('dragging');
       e.dataTransfer.effectAllowed = 'move';
-      try { e.dataTransfer.setData('text/plain', el.dataset.id); } catch (_) { }
+      try { e.dataTransfer.setData('text/plain', el.dataset.idx); } catch (_) { }
     });
     el.addEventListener('dragend', () => {
       el.classList.remove('dragging');
@@ -695,13 +767,12 @@ function bindBasketDrag(list) {
 }
 
 function syncBasketOrder() {
-  const ids = $$('#basket-list .basket-item').map(el => String(el.dataset.id));
-  if (!ids.length || ids.length !== S.basket.length) return;
-  const map = {};
-  S.basket.forEach(o => { map[String(o.id)] = o; });
-  const next = ids.map(id => map[id]).filter(Boolean);
+  // 用 DOM 里各块的原始序号还原新顺序：同一份作业可能加两次（普通/突袭），不能用 id
+  const order = $$('#basket-list .basket-item').map(el => Number(el.dataset.idx));
+  if (!order.length || order.length !== S.basket.length) return;
+  const next = order.map(i => S.basket[i]).filter(Boolean);
   if (next.length !== S.basket.length) return;
-  const changed = next.some((o, i) => String(o.id) !== String(S.basket[i].id));
+  const changed = next.some((o, i) => o !== S.basket[i]);
   S.basket = next;
   if (changed) setTimeout(renderBasket, 0);   // 重排后刷新序号
 }
@@ -719,7 +790,10 @@ async function applyToMaa() {
   if (!S.basket.length) return;
   const btn = $('#btn-apply');
   btn.disabled = true;
-  const items = S.basket.map(o => ({ copilotId: o.copilotId, stageCode: o.stageCode, title: o.title }));
+  const items = S.basket.map(o => ({
+    copilotId: o.copilotId, stageCode: o.stageCode, title: o.title,
+    variant: o.variant || '',
+  }));
   const payload = {
     items,
     profile: $('#basket-profile').value || S.settings.profile,
