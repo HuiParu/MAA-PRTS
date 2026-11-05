@@ -40,5 +40,5 @@ desktop.ini
 # 临时截图
 shot-*.png
 
-# 发布打包临时目录
-release/
+# 发布打包临时目录（只锚定根目录，别误伤 tools/release 模板）
+/release/
