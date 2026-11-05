@@ -7,7 +7,7 @@ import os
 import traceback
 import urllib.parse
 
-from . import accounts, copilot, maa, resources, settings, tasks, version
+from . import accounts, copilot, maa, paradox, resources, settings, tasks, version
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = settings.static_dir()
@@ -204,6 +204,39 @@ def api_maa_tasklist(q, _body):
     return maa.tasklist(q.get('profile'))
 
 
+def api_paradox_plan(q, body):
+    """当前账号的悖论模拟清单（练度推算，不打任何图片主意）"""
+    body = body or {}
+    file = _account_for(q.get('file') or body.get('file'))
+    snap = accounts.get_account(file)
+    out = paradox.plan(snap)
+    out['file'] = file
+    return out
+
+
+def api_paradox_pick(_q, body):
+    """按选中的关卡号批量取作业（每关一份最优）"""
+    body = body or {}
+    file = _account_for(body.get('file'))
+    stages = body.get('stages') or []
+    if not stages:
+        raise ValueError('没有选中任何悖论关卡')
+    snap = accounts.get_account(file)
+    res = paradox.pick(stages, snap)
+    res['file'] = file
+    return res
+
+
+def api_paradox_mark(_q, body):
+    """记下这些悖论已经排进过 MAA，下次默认不勾"""
+    body = body or {}
+    file = _account_for(body.get('file'))
+    snap = accounts.get_account(file)
+    imp = paradox.mark_imported(snap, body.get('stages') or [])
+    accounts.save_account(file, snap)
+    return {'file': file, 'imported': len(imp)}
+
+
 def api_task(q, _body):
     tid = q.get('id')
     t = tasks.get(tid, int(q.get('since') or 0))
@@ -264,4 +297,7 @@ ROUTES = {
     '/api/maa/tasklist': api_maa_tasklist,
     '/api/task': api_task,
     '/api/export': api_export,
+    '/api/paradox/plan': api_paradox_plan,
+    '/api/paradox/pick': api_paradox_pick,
+    '/api/paradox/mark': api_paradox_mark,
 }

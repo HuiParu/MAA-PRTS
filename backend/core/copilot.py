@@ -28,6 +28,8 @@ MAX_LEVELS = {0: (30, 0, 0), 1: (30, 0, 0), 2: (30, 0, 0), 3: (40, 55, 0),
 
 MODES = ('ready', 'borrow', 'train', 'blocked')
 MODE_CN = {'ready': '可直接抄', 'borrow': '差一人可借', 'train': '需补练度', 'blocked': '打不了'}
+# 干员数低于这个值按萌新号对待：推荐排序里优先单核作业
+NEWBIE_OWNED = 250
 
 # 作业里的 difficulty 字段是位标志（MAA CopilotModel.DifficultyFlags）：
 #   0/缺失 = 未标注（MAA 按普通处理）、1 = 普通、2 = 突袭、3 = 普通与突袭兼容
@@ -166,6 +168,8 @@ def match_operation(content, owned_map):
     opers = content.get('opers') or []
     groups = content.get('groups') or []
     missing, training, detail = [], [], []
+    rmap = _rarity_by_name()
+    six = 0
 
     for op in opers:
         name = norm(op.get('name'))
@@ -175,6 +179,8 @@ def match_operation(content, owned_map):
             missing.append(op.get('name'))
         elif not ok:
             training.append(op.get('name'))
+        if rmap.get(name) == 6:
+            six += 1
         detail.append({
             'name': op.get('name'),
             'owned': bool(owned),
@@ -204,7 +210,24 @@ def match_operation(content, owned_map):
         mode = 'borrow' if total == 13 else 'ready'
     else:
         mode = 'borrow' if (len(training) == 1 and total < 13) else 'train'
-    return mode, missing, training, total, detail
+    return mode, missing, training, total, detail, six
+
+
+# 六星判定用：名字 → 1~6 星（character_table 的 rarity 是 0 起算，转成 1 起）
+_rarity_cache = None
+_rarity_lock = threading.Lock()
+
+
+def _rarity_by_name():
+    global _rarity_cache
+    with _rarity_lock:
+        if _rarity_cache is None:
+            m = {}
+            for c in (resources.char_table() or {}).values():
+                if isinstance(c, dict) and c.get('name'):
+                    m[norm(c['name'])] = int(c.get('rarity') or 0) + 1
+            _rarity_cache = m
+    return _rarity_cache
 
 
 # ---------------------------------------------------------------- 账号 → owned
@@ -303,7 +326,7 @@ def fetch_ops(stage, pages=2, min_rating=0, force=False):
     return items
 
 
-def _item(stage, item, mode, missing, training, total, detail):
+def _item(stage, item, mode, missing, training, total, detail, six=0):
     meta = item['meta']
     content = item['content']
     doc = content.get('doc') or {}
@@ -322,6 +345,8 @@ def _item(stage, item, mode, missing, training, total, detail):
         'difficultyText': difficulty_text(flags),
         'missing': missing,
         'training': training,
+        'sixCount': six,
+        'singleCore': six == 1,
         'opers': detail,
         'maaCode': 'maa://%s' % meta.get('id'),
         'stageId': stage['stageId'],
@@ -331,18 +356,36 @@ def _item(stage, item, mode, missing, training, total, detail):
     }
 
 
-def rank_key(row):
-    return (MODES.index(row['mode']), -row['rating'], row['total'], -row['views'])
+def rank_key(row, newbie=False):
+    """推荐排序。
+
+    练度可行（mode）永远第一；之后按用户要求：
+    - 萌新号（干员 < 250）优先单核作业（阵容里只有一个六星），
+      萌新凑不齐多核阵容，单核最容易抄；
+    - 再按星级 + 浏览量：用的人多往往比星级更说明稳定。
+    """
+    key = [MODES.index(row['mode'])]
+    if newbie:
+        key.append(0 if row.get('singleCore') else 1)
+    key += [-row['rating'], -row['views'], row['total']]
+    return tuple(key)
 
 
-def _collect_rows(stage, owned_map, pages=2, min_rating=0):
-    """拉一个关卡的全部作业并打分（不截断，供普通/突袭两行共用）"""
+def _collect_rows(stage, owned_map, pages=2, min_rating=0, newbie=False):
+    """拉一个关卡的作业并打分（不截断，供普通/突袭两行共用）
+
+    用户规则：缺 ≥2 个干员、或练度不满足 ≥2 人的作业直接 pass（不推荐）；
+    整关全被 pass 时退回不过滤，免得一关作业都不剩。
+    """
     items = fetch_ops(stage, pages=pages, min_rating=min_rating)
-    rows = []
+    rows, dropped = [], []
     for it in items:
-        mode, missing, training, total, detail = match_operation(it['content'], owned_map)
-        rows.append(_item(stage, it, mode, missing, training, total, detail))
-    rows.sort(key=rank_key)
+        mode, missing, training, total, detail, six = match_operation(it['content'], owned_map)
+        r = _item(stage, it, mode, missing, training, total, detail, six)
+        (dropped if (len(missing) >= 2 or len(training) >= 2) else rows).append(r)
+    if not rows and dropped:
+        rows = dropped
+    rows.sort(key=lambda r: rank_key(r, newbie))
     return rows
 
 
@@ -401,11 +444,14 @@ def search(keyword, snap, pages=2, min_rating=0, limit=12):
                'keyword': keyword, 'stages': [stage]}
 
     owned = build_owned(snap)
+    # 萌新号：干员数量少，优先推单核作业（只有一个六星的阵容）
+    newbie = len(owned) < NEWBIE_OWNED
     stages = res['stages']
     workers = min(8, max(1, len(stages)))
     with ThreadPoolExecutor(max_workers=workers) as ex:
         collected = list(ex.map(
-            lambda s: (s, _collect_rows(s, owned, pages=pages, min_rating=min_rating)),
+            lambda s: (s, _collect_rows(s, owned, pages=pages, min_rating=min_rating,
+                                        newbie=newbie)),
             stages))
 
     # 有突袭版的关卡拆成两行：普通一行、突袭一行，通用作业（difficulty=3）

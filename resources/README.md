@@ -19,7 +19,12 @@
 |---|---|
 | `arknights.json` | 内置资源包（已生成，直接提交） |
 | `make_pack.py` | 生成脚本，只在游戏大版本更新后跑一次 |
+| `paradox.json` | 悖论模拟清单（316 条，约 38 KB，纯 json 不含图片） |
 | `assets/app.ico` | 程序图标（`build.py` 会用 Pillow 重新画） |
+
+`paradox.json` 由 `tools/build_paradox_data.py` 生成，字段是
+`charId → {name, pname, stage, elite, level}`；它只用来算「哪些干员能开打悖论」，
+判断依据是账号快照里的 `elite/level`，不涉及任何图像识别。
 
 ## arknights.json 结构
 
