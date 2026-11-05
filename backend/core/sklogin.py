@@ -96,9 +96,10 @@ def _thread_main():
 
         form = WinForms.Form()
         form.Text = '森空岛登录 · 登录成功自动抓取 token'
-        form.ClientSize = Size(560, 1000)      # 高 DPI 屏上小了会显得挤，整体放大一档
+        form.ClientSize = Size(560, 1000)      # 还原后的尺寸
         form.MinimumSize = Size(460, 660)
         form.StartPosition = WinForms.FormStartPosition.CenterScreen
+        form.WindowState = WinForms.FormWindowState.Maximized   # 点开即窗口化全屏，可一键还原
 
         wv = WebView2()
         props = CoreWebView2CreationProperties()
