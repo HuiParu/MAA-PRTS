@@ -6,7 +6,6 @@
 
 ```
 build/
-├── README.md           本说明（入库）
 └── MAA-PRTS/           ★ 发布包本体：Release 压缩包解压后的内容
     ├── MAA-PRTS.exe        主程序
     └── _internal/          运行时（Python 解释器、pywebview、前端页面、资源包）
@@ -22,7 +21,7 @@ build/
 ## 生成
 
 双击根目录 `打包.bat`（或 `python build.py`）。每次打包会先清空旧产物再全量重建，
-结束后目录里只剩本文件与 `MAA-PRTS/`。
+结束后目录里只剩 `MAA-PRTS/`。
 
 ## 数据放在哪
 
@@ -35,6 +34,6 @@ token）。**压缩发版请用刚构建好的全新产物**，或压缩前先�
 
 ## 注意
 
-- 本目录除本文件外由脚本生成，不要手改；下次打包会被覆盖。
-- `.gitignore` 忽略 `build/*`，仅本文件入库；产物不进仓库，发版走 Release 附件。
+- 本目录内容全部由脚本生成（整个目录不入库），不要手改；下次打包会被覆盖。
+- `.gitignore` 忽略 `build/*`；产物不进仓库，发版走 Release 附件。
 - 改了 `frontend/` 或 `resources/` 之后必须重新打包，exe 用的是包内的副本。

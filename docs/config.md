@@ -4,7 +4,7 @@
 
 程序所有可写数据都在这个目录里：自己的设置、运行日志，以及账号数据
 （`skland/` 子目录：DPAPI 加密的 `tokens.json`、账号练度 `accounts/*.json`，
-详见 [skland/README.md](skland/README.md)）。第一次运行时目录是空的，
+详见 [config-skland.md](config-skland.md)）。第一次运行时目录是空的，
 程序会按需自动创建。
 
 ## 文件
@@ -33,7 +33,7 @@
 ### app.log（已挪到 `debug/`）
 
 运行日志从本目录挪到了项目根的 `debug/app.log`（旧文件启动时自动挪走），
-说明见 [../debug/README.md](../debug/README.md)。
+说明见 [debug.md](debug.md)。
 
 ### gamedata.json
 
@@ -57,4 +57,4 @@
 
 - 本层的 `settings.json` / `gamedata.json` 不含账号 token 或干员数据，可以安全贴给别人看。
 - `skland/` 子目录是账号数据：`tokens.json` 为 Windows DPAPI 加密（仅本机可解），
-  其余为练度 JSON——`.gitignore` 已忽略整个子目录（README 除外）。
+  其余为练度 JSON——`.gitignore` 已忽略整个子目录。

@@ -110,7 +110,7 @@ jobs:
         shell: pwsh
         run: |
           if (-not (Test-Path 'build/MAA-PRTS/MAA-PRTS.exe')) { throw 'build/MAA-PRTS/MAA-PRTS.exe 不存在' }
-          Copy-Item tools/release/README.txt build/MAA-PRTS/
+          Copy-Item docs/release-readme.md build/MAA-PRTS/README.md
           $map = @{ 'AMD64' = 'x64'; 'ARM64' = 'arm64'; 'x86' = 'x86' }
           $arch = $map[$env:PROCESSOR_ARCHITECTURE]
           if (-not $arch) { $arch = $env:PROCESSOR_ARCHITECTURE.ToLower() }
