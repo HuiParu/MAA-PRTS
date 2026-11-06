@@ -156,7 +156,8 @@ function renderAccounts() {
     const cls = (st.sixStarCount >= 120 ? 'r6' : (st.sixStarCount >= 60 ? 'r5' : ''));
     const ch = (a.nickName || '?').replace(/[#＃].*$/, '').slice(0, 1);
     return `
-      <button class="acct ${a.file === S.current ? 'active' : ''}" data-file="${esc(a.file)}">
+      <button class="acct ${a.file === S.current ? 'active' : ''}" data-file="${esc(a.file)}"
+        draggable="true" title="点击选中，拖动可排序">
         <span class="avatar ${cls}">${esc(ch)}</span>
         <span class="acct-main">
           <span class="acct-name">${esc(a.nickName)}</span>
@@ -164,7 +165,55 @@ function renderAccounts() {
         </span>
       </button>`;
   }).join('');
-  $$('#account-list .acct').forEach(b => b.addEventListener('click', () => selectAccount(b.dataset.file)));
+}
+
+/* 账号列表排序：原生 HTML5 拖拽直接改序（同作业集 bindBasketDrag 的做法，
+   浏览器自己区分「点一下选中」和「按下拖动」，无需长按门槛、拖完也不会
+   补发 click）。顺序存 settings.accountOrder（list_accounts 按它排，
+   没排过的账号按默认序跟在后面）。绑在静态容器 #account-list 上，
+   renderAccounts 重建内部节点不影响。 */
+function bindAccountOrder(box) {
+  let dragEl = null;
+
+  const saveOrder = async () => {
+    const files = $$('.acct', box).map(b => b.dataset.file);
+    // 内存数组同步成新序——否则下一次 renderAccounts（点选别的账号就会触发）
+    // 还按旧序重建，界面看起来像「拖完又弹回去」
+    S.accounts = files.map(f => S.accounts.find(a => a.file === f)).filter(Boolean);
+    try {
+      S.settings = (await api('/api/settings', { accountOrder: files })).settings;
+    } catch (e) { /* 保存失败不回滚视觉顺序，刷新后会还原 */ }
+  };
+
+  box.addEventListener('click', e => {
+    const b = e.target.closest('.acct');
+    if (b) selectAccount(b.dataset.file);
+  });
+
+  box.addEventListener('dragstart', e => {
+    const item = e.target.closest('.acct');
+    if (!item) return;
+    dragEl = item;
+    item.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', item.dataset.file); } catch (_) { }
+  });
+  box.addEventListener('dragend', () => {
+    if (!dragEl) return;
+    dragEl.classList.remove('dragging');
+    dragEl = null;
+    saveOrder();
+  });
+  box.addEventListener('dragover', e => {
+    if (!dragEl) return;
+    const el = e.target.closest('.acct');
+    if (!el || el === dragEl) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const r = el.getBoundingClientRect();
+    const after = (e.clientY - r.top) > r.height / 2;
+    box.insertBefore(dragEl, after ? el.nextSibling : el);
+  });
 }
 
 async function selectAccount(file, silent) {
@@ -196,6 +245,8 @@ async function selectAccount(file, silent) {
 
 function renderHero() {
   const d = S.detail;
+  const importBtn = $('#btn-import-maa');
+  if (importBtn) importBtn.hidden = !d;   // 有选中账号才给「从 MAA 更新干员信息」入口
   if (!d) return;
   const a = d.account || {}, st = d.stats || {};
   const name = a.nickName || '未知账号';
@@ -248,6 +299,78 @@ function showMissing() {
     <div class="miss-wrap">${body}</div>
     <div class="modal-foot"><button class="btn-solid" data-close>知道了</button></div>
   `);
+}
+
+/* ------------------------------------------------------------ 从 MAA 更新干员信息
+   已有账号的手动更新入口：用当前账号绑定的 MAA 目录里的干员识别结果
+   （data/OperBoxData.json）刷新练度。不需要森空岛 token，后端同步处理
+   直接返回结果（不走任务轮询）。注意本地识别不含技能/专精/模组，
+   更新后这类要求按未练处理，须明示。（向导里新建账号的场景仍是「导入」） */
+async function importFromMaa() {
+  if (!S.current) { toast('先在左侧选择一个账号', 'warn'); return; }
+  // 与后端 _maa_dir_for 同语义：账号绑定的目录优先，没绑定回退全局默认
+  const dir = String((((S.detail || {}).maa || {}).dir) || S.settings.maaDir || '').trim();
+  if (!dir) { toast('该账号没有绑定 MAA 目录，也没有设置全局默认', 'err'); return; }
+  let pr;
+  try {
+    pr = await api('/api/maa/probe?dir=' + encodeURIComponent(dir));
+  } catch (e) { toast('检测 MAA 目录失败：' + e.message, 'err'); return; }
+  if (!pr.exeExists) { toast('这个 MAA 目录里没有 MAA.exe：' + dir, 'err'); return; }
+  if (!pr.operbox) { toast('MAA 目录下没有 data/OperBoxData.json（先在 MAA 小工具里跑一次干员识别）', 'err', 4200); return; }
+  const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 16) : '—');
+  const operboxFile = dir.replace(/[\\/]+$/, '') + '\\data\\OperBoxData.json';
+  const who = (((S.detail || {}).account || {}).nickName) || S.current;
+  modal(`
+    <h3>从 MAA 更新干员信息</h3>
+    <div class="sub">用这个 MAA 的干员识别结果更新「${esc(who)}」的练度，不需要森空岛 token。</div>
+    <div class="path-list">
+      <div class="path-item"><span>MAA 目录</span><code>${esc(dir)}</code></div>
+      <div class="path-item"><span>识别文件</span><code>${esc(operboxFile)}</code></div>
+      <div class="path-item"><span>识别结果</span><code>${
+        pr.operboxCount != null ? pr.operboxCount + ' 名干员' : '内容待更新时解析'
+      }${pr.operboxSyncTime ? ' · ' + esc(fmtTime(pr.operboxSyncTime)) + ' 识别' : ''}</code></div>
+    </div>
+    <div class="onb-hint bad">! 本地识别不含技能、专精、模组数据，更新后这类要求会按未练处理。</div>
+    <div class="modal-foot">
+      <button class="btn-plain" data-close>取消</button>
+      <button class="btn-solid" id="btn-import-go">开始更新</button>
+    </div>
+  `, {
+    onMount(el, close) {
+      $('#btn-import-go', el).addEventListener('click', async () => {
+        const btn = $('#btn-import-go', el);
+        btn.disabled = true;
+        btn.textContent = '更新中…';
+        try {
+          const r = await api('/api/account/import-maa', { file: S.current });
+          const st = r.stats || {};
+          const warns = (r.warnings || []).map(w => `<div class="onb-hint bad">! ${esc(w)}</div>`).join('');
+          close();
+          modal(`
+            <h3>更新完成</h3>
+            <div class="sub">已用 MAA 的干员识别结果更新 ${esc(r.file || S.current)}。</div>
+            <div class="path-list">
+              <div class="path-item"><span>更新干员</span><code>${r.imported || 0} 名${r.skipped ? '（跳过 ' + r.skipped + ' 名）' : ''}</code></div>
+              <div class="path-item"><span>数据来源</span><code>${r.source === 'yituliu' ? '一图流' : 'MAA 本地识别'}</code></div>
+              <div class="path-item"><span>识别时间</span><code>${esc(fmtTime(r.syncTime))}</code></div>
+              <div class="path-item"><span>练度概况</span><code>${st.charCount || 0} 干员 · 精二 ${st.e2Count || 0} · 六星 ${st.sixStarCount || 0} · 缺卡 ${st.missingCount || 0}</code></div>
+            </div>
+            ${warns}
+            <div class="modal-foot"><button class="btn-solid" data-close>知道了</button></div>
+          `);
+          toast('已从 MAA 更新 ' + (r.imported || 0) + ' 名干员');
+          const acc = await api('/api/accounts');
+          S.accounts = acc.accounts;
+          renderAccounts();
+          await selectAccount(S.current, true);
+        } catch (e) {
+          toast('更新失败：' + e.message, 'err', 6000);
+          btn.disabled = false;
+          btn.textContent = '重试';
+        }
+      });
+    }
+  });
 }
 
 const CN_RARITY = { 6: '六星', 5: '五星', 4: '四星', 3: '三星', 2: '二星', 1: '一星' };
@@ -1134,6 +1257,17 @@ function pollTask(tid, root) {
   });
 }
 
+/* 向向导的任务日志框补一行提示（pollTask 只写后台任务日志，
+   同步之外的动作——绑定 MAA、导入干员信息——的结果写这里） */
+function taskLogLine(box, text, bad) {
+  if (!box) return;
+  const div = document.createElement('div');
+  if (bad) div.className = 'err';
+  div.textContent = text;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
 /* ------------------------------------------------------------ 添加账号 */
 const TOKEN_GUIDE = `
   <b>三步拿到 token</b>
@@ -1142,13 +1276,22 @@ const TOKEN_GUIDE = `
     <li>按 <code>F12</code> 打开开发者工具，切到 <b>Network</b> 后刷新页面</li>
     <li>点开任意一个发往 <code>zonai.skland.com</code> 的请求，请求头里找 <code>token</code>，整段复制</li>
   </ol>
-  <span>token 就是账号凭证，加密保存在本机 <code>config/skland/tokens.json</code>（Windows DPAPI，仅本机可解），不会上传。失效了重新取一次即可。</span>`;
+  <span>token 就是账号凭证，加密保存在本机的账号文件里（Windows DPAPI，仅本机可解），不会上传。失效了重新取一次即可。</span>`;
 
-/* ------------------------------------------------------------ 添加账号（两页向导）
-   第 1 页森空岛 token（与首次引导相同），第 2 页给这个账号挑 MAA：
-   已存过的 / 新探测到的（排除已存过）/ 手动填写。MAA 不去重——多个账号
-   可以共用一个，也可以各配各的。 */
-function openAddAccount() {
+/* ------------------------------------------------------------ 账号向导（首次引导 / 添加账号共用）
+   两个入口是同一套逻辑，共用这一个两页向导组件：
+     第 1 页：选 MAA 根目录——已保存的 / 运行中新发现的（排除已保存）/
+              手动填写 + 检测；检测同时探测练度数据（data/OperBoxData.json）。
+     第 2 页：二选一——
+       方式一 森空岛 token：内置登录 / 手动粘贴，一行一个可批量导入
+              （逐个同步、失败单独重试），成功后自动从 MAA 导入练度；
+       方式二 直接从选定的 MAA 导入：完全不用 token，用识别结果直接
+              建本地账号（识别数据不含技能/专精/模组）。
+   mode='onboard'（首次引导）：多「稍后设置」，成功后把目录存为全局默认；
+   mode='add'（日常添加）：标题文案不同，其余一致。
+   MAA 不去重——多个账号可以共用一个，也可以各配各的。 */
+function openAccountWizard(mode) {
+  const onboard = mode === 'onboard';
   const p = S.paths || {};
   const saved = (S.settings.maaDirs || []).filter(d => d && typeof d === 'string');
   const savedKeys = new Set(saved.map(d => d.replace(/[\\/]+$/, '').toLowerCase()));
@@ -1163,8 +1306,10 @@ function openAddAccount() {
           </svg>
         </div>
         <div>
-          <h2>添加账号</h2>
-          <p>先拿森空岛 token 读取练度，再给这个账号指定用哪个 MAA。</p>
+          <h2>${onboard ? '两步就能开始' : '添加账号'}</h2>
+          <p>${onboard
+            ? '先指一下 MAA 目录，再选：用森空岛 token 完整同步，或直接用 MAA 的干员识别结果。'
+            : '先给这个账号指定用哪个 MAA，再选：森空岛 token，或直接用 MAA 的干员识别结果。'}</p>
         </div>
       </div>
 
@@ -1172,38 +1317,10 @@ function openAddAccount() {
         <div class="onb-step">
           <div class="onb-idx">1</div>
           <div class="onb-body">
-            <h3>森空岛 Token</h3>
-            <p>和首次添加一样：优先用内置窗口登录自动抓取，抓不到再手动粘贴。</p>
-            <div class="onb-login">
-              <div class="onb-login-main">
-                <div>
-                  <b>在内置窗口登录（推荐）</b>
-                  <span>打开森空岛官网的登录页，登录成功后自动抓取 token 填进下方，不用自己翻 F12。</span>
-                </div>
-                <button class="btn-solid mini" id="onb-login-btn">打开登录窗口</button>
-              </div>
-              <div class="onb-hint" id="onb-login-state">小窗会要求重新登录一次森空岛——token 只在登录的瞬间出现，抓到就自动验证并填到下方。</div>
-            </div>
-            <div class="onb-manual">
-              <h4>自行输入森空岛 token</h4>
-              <textarea id="onb-token" rows="3" spellcheck="false"
-                placeholder="把你自己账号的森空岛 token 粘贴到这里"></textarea>
-              <div class="path-row">
-                <input type="text" id="onb-alias" placeholder="备注（可选，例如：大号）">
-                <button class="btn-plain mini" id="onb-token-help">怎么拿 token</button>
-              </div>
-              <div class="onb-hint token-guide" id="onb-token-guide" hidden>${TOKEN_GUIDE}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="onb-page" data-page="2" hidden>
-        <div class="onb-step">
-          <div class="onb-idx">2</div>
-          <div class="onb-body">
-            <h3>这个账号用哪个 MAA</h3>
-            <p>多个账号可以共用同一个 MAA；要分开养号就给这个账号单独配一个。</p>
+            <h3>${onboard ? 'MAA 根目录' : '这个账号用哪个 MAA'}</h3>
+            <p>${onboard
+              ? '包含 <code>MAA.exe</code> 的那个文件夹，用来写入多个作业并重启 MAA。'
+              : '多个账号可以共用同一个 MAA；要分开养号就给这个账号单独配一个。'}</p>
             <div class="onb-box">
               <div class="onb-box-head"><span>已保存的 MAA</span></div>
               <div id="aa-saved">${
@@ -1224,7 +1341,52 @@ function openAddAccount() {
                 <button class="btn-plain mini" id="aa-pick">浏览</button>
                 <button class="btn-plain mini" id="aa-probe">检测</button>
               </div>
-              <div class="onb-hint" id="aa-maa-state">留空 = 跟随全局默认（设置里可改）。</div>
+              <div class="onb-hint" id="aa-maa-state">从上面列表选一个，或手动填写后点「检测」；通过后才能进下一步。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="onb-page" data-page="2" hidden>
+        <div class="onb-step">
+          <div class="onb-idx">2</div>
+          <div class="onb-body">
+            <h3>怎么添加这个账号</h3>
+            <p>两条路：拿森空岛 token 做完整同步（账号信息 + 练度），或者不用 token、直接用第 1 步 MAA 的干员识别结果。</p>
+
+            <div class="onb-box">
+              <div class="onb-box-head"><span>方式一：森空岛 token（完整同步）</span></div>
+              <div class="onb-login">
+                <div class="onb-login-main">
+                  <div>
+                    <b>在内置窗口登录（推荐）</b>
+                    <span>打开森空岛官网的登录页，登录成功后自动抓取 token 填到下方，不用自己翻 F12。</span>
+                  </div>
+                  <button class="btn-solid mini" id="onb-login-btn">打开登录窗口</button>
+                </div>
+                <div class="onb-hint" id="onb-login-state">小窗会要求重新登录一次森空岛——token 只在登录的瞬间出现，抓到就自动验证并填到下方。</div>
+              </div>
+              <div class="onb-manual">
+                <h4>自行输入森空岛 token</h4>
+                <textarea id="onb-token" rows="3" spellcheck="false"
+                  placeholder="一行一个 token（回车换行），可一次粘贴多个账号"></textarea>
+                <div class="path-row">
+                  <input type="text" id="onb-alias" placeholder="备注（可选，例如：大号）">
+                  <button class="btn-plain mini" id="onb-token-help">怎么拿 token</button>
+                </div>
+                <div class="onb-hint token-guide" id="onb-token-guide" hidden>${TOKEN_GUIDE}</div>
+              </div>
+            </div>
+
+            <div class="onb-box">
+              <div class="onb-box-head"><span>方式二：直接从选定的 MAA 导入（不用 token）</span></div>
+              <div class="onb-manual">
+                <p>用第 1 步选定 MAA 的干员识别结果直接建号。本地识别不含技能、专精、模组数据；之后想补全，随时再用方式一同步一次。</p>
+                <div class="path-row">
+                  <button class="btn-solid mini" id="aa-maa-go" disabled>用这个 MAA 直接添加</button>
+                  <span class="onb-hint" id="aa-maa-hint">在第 1 步检测 MAA 后，这里会显示练度数据概况。</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1233,9 +1395,9 @@ function openAddAccount() {
       <div class="log-box" id="task-log" style="display:none"></div>
 
       <div class="onb-foot">
-        <span class="onb-note">数据目录 <code>${esc(p.skland || 'config/skland/')}</code></span>
+        <span class="onb-note">数据目录 <code>${esc(p.accounts || 'config/')}</code></span>
         <div class="onb-btns">
-          <button class="btn-plain" id="aa-cancel">取消</button>
+          <button class="btn-plain" id="${onboard ? 'onb-skip' : 'aa-cancel'}">${onboard ? '稍后设置' : '取消'}</button>
           <button class="btn-plain" id="aa-back" hidden>上一步</button>
           <button class="btn-solid" id="aa-next">下一步</button>
           <button class="btn-solid" id="aa-go" hidden>保存并同步账号</button>
@@ -1244,7 +1406,7 @@ function openAddAccount() {
     </div>`;
   document.body.appendChild(m);
 
-  const stopLoginPoll = wireSklandLogin(m, '✓ token 已验证并填好，点「下一步」继续。');
+  const stopLoginPoll = wireSklandLogin(m, '✓ token 已验证并填好，点「保存并同步账号」。');
 
   const close = () => {
     stopLoginPoll();
@@ -1261,26 +1423,51 @@ function openAddAccount() {
   };
   const state = $('#aa-maa-state', m);
   const input = $('#aa-maa', m);
+  // 第 1 步检测结果：选定的 MAA 有没有练度数据（决定方式二可用）
+  let operboxReady = false;
+  const maaGoBtn = $('#aa-maa-go', m);
+  const maaHint = $('#aa-maa-hint', m);
+  const setMaaImport = r => {
+    operboxReady = !!(r && r.operbox);
+    maaGoBtn.disabled = !operboxReady;
+    if (operboxReady) {
+      maaHint.className = 'onb-hint ok';
+      maaHint.textContent = `✓ 有练度数据（${r.operboxCount != null ? r.operboxCount + ' 名' : ''}${r.operboxSyncTime ? '，' + String(r.operboxSyncTime).slice(0, 10) + ' 识别' : ''}），点左边按钮直接建号`;
+    } else if (r) {
+      maaHint.className = 'onb-hint bad';
+      maaHint.textContent = '! 该 MAA 还没有干员识别数据（data/OperBoxData.json）——先在 MAA 小工具里跑一次干员识别，或改用方式一';
+    } else {
+      maaHint.className = 'onb-hint';
+      maaHint.textContent = '在第 1 步检测 MAA 后，这里会显示练度数据概况。';
+    }
+  };
 
   const probe = async () => {
     const dir = input.value.trim();
-    if (!dir) { state.className = 'onb-hint'; state.textContent = '留空 = 跟随全局默认（设置里可改）。'; return null; }
+    if (!dir) { state.className = 'onb-hint'; state.textContent = '先填一个目录再检测，或从上面列表选一个。'; setMaaImport(null); return null; }
     try {
       const r = await api('/api/maa/probe?dir=' + encodeURIComponent(dir));
       if (r.exeExists && r.configExists) {
         state.className = 'onb-hint ok';
-        state.innerHTML = `✓ 找到 MAA.exe，配置 ${r.profiles.length} 个：<code>${esc(r.profiles.slice(0, 4).join(' / '))}</code>`;
+        state.innerHTML = `✓ 找到 MAA.exe，配置 ${r.profiles.length} 个：<code>${esc(r.profiles.slice(0, 4).join(' / '))}</code>`
+          + (r.operbox
+            ? `<br>该 MAA 有练度数据（${r.operboxCount != null ? r.operboxCount + ' 名' : ''}${r.operboxSyncTime ? '，' + esc(String(r.operboxSyncTime).slice(0, 10)) + ' 识别' : ''}）`
+            : '');
+        setMaaImport(r);
       } else if (r.exeExists) {
         state.className = 'onb-hint bad';
         state.textContent = '! 找到 MAA.exe，但还没有 config/gui.new.json（先启动一次 MAA 就好）';
+        setMaaImport(null);
       } else {
         state.className = 'onb-hint bad';
         state.textContent = '✗ 这个目录里没有 MAA.exe，请选包含 MAA.exe 的文件夹';
+        setMaaImport(null);
       }
       return r;
     } catch (e) {
       state.className = 'onb-hint bad';
       state.textContent = '检测失败：' + e.message;
+      setMaaImport(null);
       return null;
     }
   };
@@ -1330,6 +1517,7 @@ function openAddAccount() {
     g.hidden = !g.hidden;
     if (!g.hidden) $('#onb-token', m).focus();
   });
+  $$('[data-url]', m).forEach(b => b.addEventListener('click', () => openUrl(b.dataset.url)));
   input.addEventListener('input', () => {
     $$('input[name="aa-dir"]', m).forEach(r => { r.checked = false; });
   });
@@ -1341,54 +1529,163 @@ function openAddAccount() {
   $('#aa-probe', m).addEventListener('click', probe);
   loadProcs();
 
-  $('#aa-cancel', m).addEventListener('click', close);
+  const cancelBtn = $('#aa-cancel', m);
+  if (cancelBtn) cancelBtn.addEventListener('click', close);
+  const skipBtn = $('#onb-skip', m);
+  if (skipBtn) skipBtn.addEventListener('click', () => {
+    close();
+    if (!S.accounts.length) setTimeout(() => openAccountWizard('add'), 200);
+  });
   $('#aa-back', m).addEventListener('click', () => showPage(1));
-  $('#aa-next', m).addEventListener('click', () => {
-    const token = $('#onb-token', m).value.trim();
-    if (!token) { toast('先把森空岛 token 粘进来，或用上方内置登录自动抓取', 'warn'); $('#onb-token', m).focus(); return; }
+  $('#aa-next', m).addEventListener('click', async () => {
+    const dir = input.value.trim();
+    if (!dir) { toast(onboard ? '先选好 MAA 根目录，或点「稍后设置」' : '先给这个账号选一个 MAA 根目录', 'warn'); input.focus(); return; }
+    const ok = await probe();
+    if (!ok || !ok.exeExists) { toast('MAA 目录没通过检测，改一下再试', 'err'); return; }
     showPage(2);
-    if (input.value.trim()) probe();
-    else setTimeout(() => input.focus(), 80);
+    setTimeout(() => { const t = $('#onb-token', m); if (t && !t.value.trim()) t.focus(); }, 80);
   });
 
+  // 首次引导：选定目录同时存为全局默认（失败不拦后面的添加）
+  const saveOnboardDir = async dir => {
+    if (!onboard || !dir) return;
+    try {
+      S.settings = (await api('/api/settings', { maaDir: dir })).settings;
+      S.maa = await api('/api/maa/status');
+      fillBasketProfiles();
+    } catch (e) { /* 存目录失败不拦同步/建号 */ }
+  };
+
+  // 方式一：森空岛 token，一行一个批量导入，失败的不拖累后面的行
+  let pendingRetry = [];
   $('#aa-go', m).addEventListener('click', async () => {
     const btn = $('#aa-go', m);
-    const token = $('#onb-token', m).value.trim();
+    const tokens = pendingRetry.length ? pendingRetry
+      : [...new Set($('#onb-token', m).value.split(/\r?\n/).map(s => s.trim()).filter(Boolean))];
     const alias = $('#onb-alias', m).value.trim();
     const dir = input.value.trim();
-    if (!token) { toast('先把森空岛 token 粘进来', 'warn'); showPage(1); return; }
+    if (!tokens.length) { toast('先把森空岛 token 粘进来，或用方式二直接从 MAA 导入', 'warn'); showPage(2); $('#onb-token', m).focus(); return; }
     if (dir) {
       const ok = await probe();
-      if (!ok || !ok.exeExists) { toast('MAA 目录没通过检测，改一下，或清空跟随全局默认', 'err'); return; }
+      if (!ok || !ok.exeExists) { toast('MAA 目录没通过检测，改一下再试', 'err'); showPage(1); return; }
     }
+    await saveOnboardDir(dir);
+    pendingRetry = [];
     btn.disabled = true;
-    btn.textContent = '同步中…';
+    const logBox = $('#task-log', m);
+    logBox.style.display = 'block';
+    logBox.innerHTML = '';
+    const many = tokens.length > 1;
+    if (many && alias) {
+      const div = document.createElement('div');
+      div.textContent = '一次添加多个账号时「备注」不生效（各账号用森空岛昵称区分），已忽略。';
+      logBox.appendChild(div);
+    }
+    const added = [];
+    const failed = [];
+    for (let i = 0; i < tokens.length; i++) {
+      btn.textContent = many ? `同步中…（${i + 1}/${tokens.length}）` : '同步中…';
+      try {
+        const { taskId } = await api('/api/account/refresh', { token: tokens[i], alias: many ? '' : alias });
+        const result = await pollTask(taskId, m);
+        added.push((result && result.newest) || '');
+      } catch (e) {
+        failed.push({ token: tokens[i], error: e.message });
+      }
+    }
+    let importedTotal = 0;
+    if (added.length) {
+      // 给新加的账号们绑定选定的 MAA；留空就不绑定（回退全局默认）
+      if (dir) {
+        for (const file of added) {
+          if (file) await api('/api/account/maa', { file, patch: { dir } }).catch(() => { });
+        }
+        // 新账号顺手导入 MAA 里的干员识别结果（不依赖 token；失败不影响账号添加）
+        if (operboxReady) {
+          for (const file of added) {
+            if (!file) continue;
+            taskLogLine(logBox, `从 MAA 导入干员信息（${file}）…`);
+            try {
+              const r = await api('/api/account/import-maa', { file });
+              importedTotal += r.imported || 0;
+              taskLogLine(logBox, `✓ 已导入 ${r.imported || 0} 名干员${r.skipped ? `（跳过 ${r.skipped} 名）` : ''}，来源 ${r.source === 'yituliu' ? '一图流' : 'MAA 本地识别'}`);
+            } catch (e) {
+              taskLogLine(logBox, `✗ ${file} 干员信息导入失败：${e.message}`, true);
+            }
+          }
+        } else {
+          taskLogLine(logBox, '! 该 MAA 还没有干员识别数据（data/OperBoxData.json），可先在 MAA 小工具里识别一次，之后从森空岛页手动导入', true);
+        }
+      }
+      const acc = await api('/api/accounts');
+      S.accounts = acc.accounts;
+      renderAccounts();
+      renderMaaState();
+      const st = await api('/api/settings', {});
+      S.settings = st.settings;
+    }
+    if (failed.length) {
+      toast(`成功 ${added.length} 个，失败 ${failed.length} 个，详见日志`, 'err', 6000);
+      failed.forEach(f => {
+        const div = document.createElement('div');
+        div.className = 'err';
+        div.textContent = `✗ token ${f.token.slice(0, 6)}…：${f.error}`;
+        logBox.appendChild(div);
+      });
+      pendingRetry = failed.map(f => f.token);
+      btn.disabled = false;
+      btn.textContent = `重试失败的 ${failed.length} 个`;
+      return;
+    }
+    close();
+    const extra = importedTotal > 0 ? '，练度已从 MAA 导入' : '';
+    toast(many ? `${added.length} 个账号已添加${extra}` : `账号已添加${extra}`);
+    const target = added[added.length - 1];
+    if (target) await selectAccount(target, true);
+  });
+
+  // 方式二：不用 token，直接用选定 MAA 的识别结果建本地账号
+  $('#aa-maa-go', m).addEventListener('click', async () => {
+    const dir = input.value.trim();
+    const alias = $('#onb-alias', m).value.trim();
+    if (!dir || !operboxReady) { toast('先在第 1 步选一个有练度数据的 MAA 目录', 'warn'); showPage(1); return; }
+    maaGoBtn.disabled = true;
+    maaGoBtn.textContent = '导入中…';
     const logBox = $('#task-log', m);
     logBox.style.display = 'block';
     logBox.innerHTML = '';
     try {
-      const { taskId } = await api('/api/account/refresh', { token, alias });
-      const result = await pollTask(taskId, m);
-      const target = (result && result.newest) || (S.accounts[0] && S.accounts[0].file);
-      // 给新账号绑定选定的 MAA；留空就不绑定（回退全局默认）
-      if (target && dir) await api('/api/account/maa', { file: target, patch: { dir } });
+      await saveOnboardDir(dir);
+      const r = await api('/api/account/create-from-maa', { dir, alias });
+      taskLogLine(logBox, `✓ 已创建账号 ${r.file}（${r.imported || 0} 名干员${r.skipped ? '，跳过 ' + r.skipped + ' 名' : ''}，来源 ${r.source === 'yituliu' ? '一图流' : 'MAA 本地识别'}）`);
+      (r.warnings || []).forEach(w => taskLogLine(logBox, '! ' + w, true));
       const acc = await api('/api/accounts');
       S.accounts = acc.accounts;
       renderAccounts();
+      renderMaaState();
       const st = await api('/api/settings', {});
       S.settings = st.settings;
       close();
-      toast('账号已添加');
-      if (target) await selectAccount(target, true);
+      toast('账号已添加（从 MAA 导入）');
+      if (r.file) await selectAccount(r.file, true);
     } catch (e) {
-      toast('同步失败：' + e.message, 'err', 6000);
-      btn.disabled = false;
-      btn.textContent = '重试';
+      taskLogLine(logBox, '✗ 建号失败：' + e.message, true);
+      toast('建号失败：' + e.message, 'err', 6000);
+      maaGoBtn.disabled = false;
+      maaGoBtn.textContent = '用这个 MAA 直接添加';
     }
   });
 
   showPage(1);
-  setTimeout(() => { const t = $('#onb-token', m); if (t) t.focus(); }, 80);
+  setTimeout(() => { const t = $('#aa-maa', m); if (t) t.focus(); }, 80);
+}
+
+function openAddAccount() { openAccountWizard('add'); }
+
+function openOnboarding() {
+  if (S.onboarded) return;
+  S.onboarded = true;
+  openAccountWizard('onboard');
 }
 
 /* ------------------------------------------------------------ 内置森空岛登录
@@ -1444,239 +1741,6 @@ function wireSklandLogin(m, doneHtml) {
   return stop;
 }
 
-/* ------------------------------------------------------------ 首次启动引导 */
-function openOnboarding() {
-  if (S.onboarded) return;
-  S.onboarded = true;
-  const p = S.paths || {};
-  const m = document.createElement('div');
-  m.className = 'onboard';
-  m.innerHTML = `
-    <div class="onb-card">
-      <div class="onb-head">
-        <div class="brand-mark">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-            <path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5z"/><path d="M8.5 13.5 12 16l3.5-2.5"/>
-          </svg>
-        </div>
-        <div>
-          <h2>两步就能开始</h2>
-          <p>先指一下 MAA 目录，再拿森空岛 token 读取练度。数据都保存在本机项目里。</p>
-        </div>
-      </div>
-
-      <div class="onb-page" data-page="1">
-        <div class="onb-step">
-          <div class="onb-idx">1</div>
-          <div class="onb-body">
-            <h3>MAA 根目录</h3>
-            <p>包含 <code>MAA.exe</code> 的那个文件夹，用来写入多个作业并重启 MAA。</p>
-            <div class="onb-box">
-              <div class="onb-box-head">
-                <span>正在运行的 MAA</span>
-                <button class="btn-plain mini" id="onb-procs-refresh">刷新</button>
-              </div>
-              <div id="onb-procs"><span class="onb-hint">检测中…</span></div>
-            </div>
-            <div class="onb-manual">
-              <h4>自行选择 MAA 路径</h4>
-              <div class="path-row">
-                <input type="text" id="onb-maa" placeholder="例如 D:\\MAA\\MAA-v6.20.1-win-x64">
-                <button class="btn-plain mini" id="onb-pick">浏览</button>
-                <button class="btn-plain mini" id="onb-probe">检测</button>
-              </div>
-              <div class="onb-hint" id="onb-maa-state">还没检测。</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="onb-page" data-page="2" hidden>
-        <div class="onb-step">
-          <div class="onb-idx">2</div>
-          <div class="onb-body">
-            <h3>森空岛 Token</h3>
-            <p>用于拉取干员、等级、专精、模组，生成本地账号配置。</p>
-            <div class="onb-login">
-              <div class="onb-login-main">
-                <div>
-                  <b>在内置窗口登录（推荐）</b>
-                  <span>打开森空岛官网的登录页，登录成功后自动抓取 token 填进下方，不用自己翻 F12。</span>
-                </div>
-                <button class="btn-solid mini" id="onb-login-btn">打开登录窗口</button>
-              </div>
-              <div class="onb-hint" id="onb-login-state">小窗会要求重新登录一次森空岛——token 只在登录的瞬间出现，抓到就自动验证并填到下方。</div>
-            </div>
-            <div class="onb-manual">
-              <h4>自行输入森空岛 token</h4>
-              <textarea id="onb-token" rows="3" spellcheck="false"
-                placeholder="把你自己账号的森空岛 token 粘贴到这里"></textarea>
-              <div class="path-row">
-                <input type="text" id="onb-alias" placeholder="备注（可选，例如：大号）">
-                <button class="btn-plain mini" id="onb-token-help">怎么拿 token</button>
-              </div>
-              <div class="onb-hint token-guide" id="onb-token-guide" hidden>${TOKEN_GUIDE}</div>
-              <div class="onb-hint">token 会加密写进 <code>config/skland/tokens.json</code>，下次打开可以一键同步全部账号。</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="log-box" id="task-log" style="display:none"></div>
-
-      <div class="onb-foot">
-        <span class="onb-note">数据目录 <code>${esc(p.skland || 'config/skland/')}</code></span>
-        <div class="onb-btns">
-          <button class="btn-plain" id="onb-skip">稍后设置</button>
-          <button class="btn-plain" id="onb-back" hidden>上一步</button>
-          <button class="btn-solid" id="onb-next">下一步</button>
-          <button class="btn-solid" id="onb-go" hidden>保存并同步账号</button>
-        </div>
-      </div>
-    </div>`;
-  document.body.appendChild(m);
-
-  // 内置登录：小窗里登录成功 → 后端嗅探并验证 token → 自动回填
-  const stopLoginPoll = wireSklandLogin(m, '✓ token 已验证并填好，直接点「保存并同步账号」。');
-
-  const close = () => {
-    stopLoginPoll();
-    api('/api/skland/login/cancel', {}).catch(() => { });   // 顺手关掉可能还开着的登录小窗
-    m.style.transition = '.18s ease';
-    m.style.opacity = '0';
-    setTimeout(() => m.remove(), 180);
-  };
-  const showPage = n => {
-    $$('[data-page]', m).forEach(el => { el.hidden = +el.dataset.page !== n; });
-    $('#onb-next', m).hidden = n !== 1;
-    $('#onb-go', m).hidden = n !== 2;
-    $('#onb-back', m).hidden = n !== 2;
-  };
-  const state = $('#onb-maa-state', m);
-  $('#onb-token-help', m).addEventListener('click', () => {
-    const g = $('#onb-token-guide', m);
-    g.hidden = !g.hidden;
-    if (!g.hidden) $('#onb-token', m).focus();
-  });
-  $$('[data-url]', m).forEach(b => b.addEventListener('click', () => openUrl(b.dataset.url)));
-  const probe = async () => {
-    const dir = $('#onb-maa', m).value.trim();
-    if (!dir) { state.className = 'onb-hint'; state.textContent = '先填一个目录再检测。'; return null; }
-    try {
-      const r = await api('/api/maa/probe?dir=' + encodeURIComponent(dir));
-      if (r.exeExists && r.configExists) {
-        state.className = 'onb-hint ok';
-        state.innerHTML = `✓ 找到 MAA.exe，配置 ${r.profiles.length} 个：<code>${esc(r.profiles.slice(0, 4).join(' / '))}</code>`;
-      } else if (r.exeExists) {
-        state.className = 'onb-hint bad';
-        state.textContent = '! 找到 MAA.exe，但还没有 config/gui.new.json（先启动一次 MAA 就好）';
-      } else {
-        state.className = 'onb-hint bad';
-        state.textContent = '✗ 这个目录里没有 MAA.exe，请选包含 MAA.exe 的文件夹';
-      }
-      return r;
-    } catch (e) {
-      state.className = 'onb-hint bad';
-      state.textContent = '检测失败：' + e.message;
-      return null;
-    }
-  };
-
-  // 从正在运行的 MAA.exe 反查安装目录，勾选即填入并检测
-  const loadProcs = async () => {
-    const box = $('#onb-procs', m);
-    box.innerHTML = '<span class="onb-hint">检测中…</span>';
-    try {
-      const r = await api('/api/maa/running');
-      const rows = r.list || [];
-      if (!rows.length) {
-        box.innerHTML = '<span class="onb-hint">未找到正在运行的 MAA——先启动 MAA 再点「刷新」，或在下面自行选择路径。</span>';
-        return;
-      }
-      box.innerHTML = '';
-      rows.forEach((row, i) => {
-        const lab = document.createElement('label');
-        lab.className = 'onb-proc';
-        lab.innerHTML = `<input type="radio" name="onb-proc"${i === 0 ? ' checked' : ''}>
-          <code title="${esc(row.path)}">${esc(row.dir)}</code>
-          <span class="onb-proc-pid">PID ${row.pids.join(' / ')}</span>`;
-        lab.querySelector('input').addEventListener('change', () => {
-          $('#onb-maa', m).value = row.dir;
-          probe();
-        });
-        box.appendChild(lab);
-      });
-      $('#onb-maa', m).value = rows[0].dir;
-      probe();
-    } catch (e) {
-      box.innerHTML = `<span class="onb-hint bad">检测失败：${esc(e.message)}</span>`;
-    }
-  };
-  loadProcs();
-  $('#onb-procs-refresh', m).addEventListener('click', loadProcs);
-
-  $('#onb-pick', m).addEventListener('click', async () => {
-    const input = $('#onb-maa', m);
-    await pickFolder(input);
-    if (input.value.trim()) probe();
-  });
-  $('#onb-probe', m).addEventListener('click', probe);
-  $('#onb-next', m).addEventListener('click', async () => {
-    const dir = $('#onb-maa', m).value.trim();
-    if (!dir) { toast('先选好 MAA 根目录，或点「稍后设置」', 'warn'); $('#onb-maa', m).focus(); return; }
-    const ok = await probe();
-    if (!ok || !ok.exeExists) { toast('MAA 目录没通过检测，改一下再试', 'err'); return; }
-    showPage(2);
-    setTimeout(() => { const t = $('#onb-token', m); if (t && !t.value.trim()) t.focus(); }, 80);
-  });
-  $('#onb-back', m).addEventListener('click', () => showPage(1));
-  $('#onb-skip', m).addEventListener('click', () => {
-    close();
-    if (!S.accounts.length) setTimeout(openAddAccount, 200);
-  });
-
-  $('#onb-go', m).addEventListener('click', async () => {
-    const token = $('#onb-token', m).value.trim();
-    const alias = $('#onb-alias', m).value.trim();
-    const maaDir = $('#onb-maa', m).value.trim();
-    if (!token) { toast('先把森空岛 token 粘进来，或用上方内置登录自动抓取', 'warn'); $('#onb-token', m).focus(); return; }
-    if (!maaDir) { toast('把 MAA 根目录填上，或者点「稍后设置」', 'warn'); showPage(1); return; }
-    const ok = await probe();
-    if (!ok || !ok.exeExists) { toast('MAA 目录没通过检测，改一下再试', 'err'); showPage(1); return; }
-
-    const btn = $('#onb-go', m);
-    btn.disabled = true;
-    btn.textContent = '同步中…';
-    const logBox = $('#task-log', m);
-    logBox.style.display = 'block';
-    logBox.innerHTML = '';
-    try {
-      S.settings = (await api('/api/settings', { maaDir })).settings;
-      S.maa = (await api('/api/maa/status'));
-      fillBasketProfiles();
-      const { taskId } = await api('/api/account/refresh', { token, alias });
-      const result = await pollTask(taskId, m);
-      const acc = await api('/api/accounts');
-      S.accounts = acc.accounts;
-      renderAccounts();
-      renderMaaState();
-      close();
-      toast('账号已就绪');
-      const target = (result && result.newest) || (S.accounts[0] && S.accounts[0].file);
-      // 首个账号也记下自己用的 MAA，与后续添加的账号同规则
-      if (target && maaDir) await api('/api/account/maa', { file: target, patch: { dir: maaDir } }).catch(() => { });
-      if (target) await selectAccount(target, true);
-    } catch (e) {
-      toast('同步失败：' + e.message, 'err', 6000);
-      btn.disabled = false;
-      btn.textContent = '重试';
-    }
-  });
-
-  showPage(1);
-  setTimeout(() => { $('#onb-maa', m).focus(); }, 80);
-}
-
 /* ------------------------------------------------------------ 设置 */
 function nativeApi() { return (window.pywebview && window.pywebview.api) || null; }
 
@@ -1729,7 +1793,7 @@ function openSettings() {
     </label>
 
     <div class="path-list">
-      <div class="path-item"><span>账号数据</span><code>${esc(p.skland || '')}</code>${openBtn('skland', '打开')}</div>
+      <div class="path-item"><span>账号数据</span><code>${esc(p.accounts || '')}</code>${openBtn('accounts', '打开')}</div>
       <div class="path-item"><span>配置与日志</span><code>${esc(p.config || '')}</code>${openBtn('config', '打开')}</div>
       <div class="path-item"><span>游戏资源</span><code>v${esc(gd.version || pk.version || '?')} · ${counts.chars || 0} 干员 · ${counts.stages || 0} 关卡</code></div>
       <div class="path-item"><span>程序版本</span><code>MAA-PRTS ${esc(gd.app || (S.appInfo && S.appInfo.version) || '')}</code></div>
@@ -1789,7 +1853,9 @@ function openSettings() {
 function bindGlobal() {
   $('#btn-search').addEventListener('click', doSearch);
   $('#search-input').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+  bindAccountOrder($('#account-list'));
   $('#btn-add-account').addEventListener('click', openAddAccount);
+  $('#btn-import-maa').addEventListener('click', importFromMaa);
   $('#btn-settings').addEventListener('click', openSettings);
   $('#maa-state').addEventListener('click', async () => {
     await refreshMaaStatus();

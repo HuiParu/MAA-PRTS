@@ -777,6 +777,14 @@ input:focus, select:focus, button:focus-visible { outline: none; }
   letter-spacing: -1px;
 }
 .basket-item:hover .drag-dots { color: var(--mint); }
+
+/* 账号列表：拖动改序（原生 DnD，同作业集） */
+.acct[draggable] { -webkit-user-drag: element; }
+.acct.dragging {
+  opacity: .5;
+  outline: 1px dashed rgba(94, 234, 212, 0.6);
+  outline-offset: -1px;
+}
 .basket-idx {
   flex: 0 0 auto;
   min-width: 13px;

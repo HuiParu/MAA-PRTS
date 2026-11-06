@@ -15,10 +15,11 @@
 | 文件 | 职责 |
 |---|---|
 | `main.py` | 入口：找端口、起服务、开窗口、日志、原生桥 `Bridge` |
-| `core/settings.py` | 路径解析（项目根、skland、config）、`settings.json` 读写 |
+| `core/settings.py` | 路径解析（运行根、`config/`）、`settings.json` 读写、旧目录迁移 |
 | `core/api.py` | 所有 `/api/*` 的实现与路由表，静态文件 MIME 表 |
-| `core/accounts.py` | 读 `config/skland/accounts/*.json`、加密 token 读写、后台同步 |
+| `core/accounts.py` | 读 `config/*.json` 账号文件、token 密文（skd 段）读取、后台同步 |
 | `core/updater.py` | token → 账号配置的完整构建（练度、缺卡、统计、增量对比） |
+| `core/operbox.py` | MAA 干员识别数据（`data/OperBoxData.json`）解析 → 账号练度导入 |
 | `core/skland.py` | 森空岛鉴权链：token → grant → cred → 签名请求 → 绑定/角色数据 |
 | `core/copilot.py` | 作业站接口 + 干员要求匹配算法 |
 | `core/resources.py` | 读 `resources/arknights.json`：关卡索引、干员表、技能/模组名、活动正式名与代号前缀 |
@@ -54,10 +55,9 @@ main()
 
 ## 接口一览
 
-`api.py` 的 `ROUTES` 共注册 21 条（`/api/ping` 在 `main.py` 里特判，不在此表）。
-路由本身不分 GET/POST——同一处理函数两种方法都能进。表中的方法：前端在用的
-12 条按实际调用标注；其余 9 条前端暂未调用（预留 / 外部用），按语义标注
-（POST = 需要带 body）。
+`api.py` 的 `ROUTES` 注册全部 `/api/*` 接口（`/api/ping` 在 `main.py` 里特判，
+不在此表）。路由本身不分 GET/POST——同一处理函数两种方法都能进。表中的
+方法按语义标注（POST = 需要带 body）。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -66,22 +66,24 @@ main()
 | GET | `/api/accounts` | 账号列表（含每个账号的统计摘要） |
 | GET | `/api/account?file=` | 单个账号完整配置：account / stats / missing / chars |
 | POST | `/api/account/maa` | 把 `maa.profile` 等用户字段写回账号 JSON（同步不覆盖的那几个） |
-| POST | `/api/account/remove` | 删除账号：不真删，移入 `accounts/_removed/` 备份 |
-| POST | `/api/account/refresh` | 同步账号。带 `token` 同步单个并记入 `tokens.txt`；不带则按 `tokens.txt` 全部同步。返回 `taskId` |
+| POST | `/api/account/remove` | 删除账号：不真删，移入 `config/_removed/` 备份 |
+| POST | `/api/account/refresh` | 同步账号。带 `token` 同步单个（密文写进账号文件 `skd` 段）；不带则按各账号文件 ∪ 旧 `tokens.json` 全部同步。返回 `taskId` |
+| POST | `/api/account/import-maa` | 从账号绑定的 MAA 目录读干员识别结果（`done=false` 残缺名单拒绝），覆盖练度/统计/缺卡（账号信息与 `skd` 保留），同步任务直接返回摘要 |
+| POST | `/api/account/create-from-maa` | 不用森空岛 token：用 `dir` 指定 MAA 目录的干员识别结果直接建本地账号（合成 uid、昵称取备注或目录名、无 `skd` 段、重名顺延 (2)(3)），返回建号摘要 |
 | POST | `/api/search` | 搜作业 + 练度匹配（body：`q` / `file` / `pages` / `minRating` / `limit`） |
 | GET | `/api/activities` | 近期活动列表（快捷栏数据源） |
 | GET | `/api/gamedata` | 资源包版本状态（含 `pending` 更新提示） |
 | POST | `/api/gamedata/ack` | 清掉待提示的资源更新 |
 | GET | `/api/op?id=` | 作业详情（干员与要求、动作数、`maa://` 代码） |
 | GET | `/api/maa/status` | MAA 是否运行、配置列表、当前配置 |
-| GET | `/api/maa/probe?dir=` | 检测目录是不是 MAA 根目录（引导/设置用） |
+| GET | `/api/maa/probe?dir=` | 检测目录是不是 MAA 根目录（引导/设置用）；附干员识别数据 `operbox/operboxCount/operboxSyncTime` |
 | POST | `/api/maa/close` | 关闭正在运行的 MAA 进程 |
 | POST | `/api/maa/open` | 启动 `MAA.exe` |
 | POST | `/api/maa/apply` | 写入作业集：关 MAA → 备份 → 下载 → 写 TaskList → 重启。返回 `taskId` |
 | POST | `/api/maa/clear` | 清空某配置的 `Copilot.TaskList` |
 | GET | `/api/maa/tasklist?profile=` | 读 MAA 某配置当前的 `TaskList` |
 | GET | `/api/task?id=&since=` | 后台任务状态与增量日志（`since` 是日志游标） |
-| POST | `/api/export` | 导出「作业站本地导入」格式到 `config/skland/accounts/作业站/` |
+| POST | `/api/export` | 导出「作业站本地导入」格式到 `config/作业站/` |
 
 所有响应统一为 `{"ok": true, "data": ...}` 或 `{"ok": false, "error": "..."}`。
 

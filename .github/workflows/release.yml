@@ -104,7 +104,7 @@ jobs:
           print('APP_VERSION -> %s' % version)
 
       - name: Build
-        run: python -u build.py
+        run: python -u tools/build.py
 
       - name: Package zip
         shell: pwsh

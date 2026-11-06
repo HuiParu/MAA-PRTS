@@ -8,7 +8,7 @@
 用法：
     python resources/make_pack.py --excel "D:\\ArknightsGameResource\\gamedata\\excel"
     python resources/make_pack.py --excel ... --out resources/arknights.json
-    python resources/make_pack.py --excel ... --subprof skland/subprof_cache.json
+    python resources/make_pack.py --excel ... --subprof config/subprof_cache.json
 
 只在游戏大版本更新后需要重跑一次；平时程序只读 arknights.json，不碰原始表。
 """
@@ -153,11 +153,13 @@ def build(excel_dir, subprof_path=None, base_path=None):
 
 def _default_subprof(root):
     """找运行时学到的分支名缓存：新路径在前，旧版目录兜底"""
-    for rel in (('config', 'skland', 'subprof_cache.json'), ('skland', 'subprof_cache.json')):
+    for rel in (('config', 'subprof_cache.json'),
+                ('config', 'skland', 'subprof_cache.json'),
+                ('skland', 'subprof_cache.json')):
         p = os.path.join(root, *rel)
         if os.path.isfile(p):
             return p
-    return os.path.join(root, 'config', 'skland', 'subprof_cache.json')
+    return os.path.join(root, 'config', 'subprof_cache.json')
 
 
 def main(argv=None):
@@ -166,7 +168,7 @@ def main(argv=None):
     ap.add_argument('--excel', required=True, help='ArknightsGameResource/gamedata/excel 目录')
     ap.add_argument('--out', default=os.path.join(HERE, 'arknights.json'))
     ap.add_argument('--subprof', default=None,
-                    help='分支名缓存（默认自动找 config/skland/subprof_cache.json）')
+                    help='分支名缓存（默认自动找 config/subprof_cache.json）')
     args = ap.parse_args(argv)
 
     subprof_path = args.subprof or _default_subprof(root)
