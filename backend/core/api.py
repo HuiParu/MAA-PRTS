@@ -7,7 +7,7 @@ import os
 import traceback
 import urllib.parse
 
-from . import accounts, copilot, maa, paradox, resources, settings, sklogin, tasks, version
+from . import accounts, copilot, maa, operbox, paradox, resources, settings, sklogin, tasks, version
 
 WEB = settings.static_dir()
 
@@ -38,19 +38,22 @@ def _account_for(file):
 def bootstrap(_q, _body):
     st = settings.load()
     accs = accounts.list_accounts()
-    # 状态卡按「上次账号」绑定的 MAA 展示（没绑定就是全局默认）
-    status = maa.status(_maa_dir_for(st.get('lastAccount')))
+    # 状态卡按「生效账号」（上次账号 → 列表首个）绑定的 MAA 展示，
+    # 账号没绑定才回退全局默认。首启 settings 里还没有 lastAccount，
+    # 也要看首个账号的绑定——否则账号明明配好了 MAA 仍会误判 needsMaa
+    # 弹出首次引导
+    last = _account_for_last(st, accs)
+    status = maa.status(_maa_dir_for(last))
     acts = resources.activity_list(18)
     sv = _settings_view(st, accs)
     return {
         'settings': {k: sv[k] for k in ('maaDir', 'maaDirs', 'autoStartMaa')},
         'accounts': accs,
-        'lastAccount': _account_for_last(st, accs),
+        'lastAccount': last,
         'maa': status,
         'activities': acts,
         'paths': {
             'root': settings.project_root(),
-            'skland': settings.skland_dir(),
             'accounts': settings.accounts_dir(),
             'tokens': settings.tokens_file(),
             'config': settings.CONFIG_DIR,
@@ -105,8 +108,10 @@ def _settings_view(st, accs):
 def api_settings(_q, body):
     patch = body or {}
     st = settings.save(patch) if patch else settings.load()
-    status = maa.status(_maa_dir_for(st.get('lastAccount')))
-    return {'settings': _settings_view(st, accounts.list_accounts()), 'maa': status}
+    accs = accounts.list_accounts()
+    # 与 bootstrap 同口径：按生效账号（上次 → 首个）绑定的 MAA 出状态
+    status = maa.status(_maa_dir_for(_account_for_last(st, accs)))
+    return {'settings': _settings_view(st, accs), 'maa': status}
 
 
 def api_accounts(_q, _body):
@@ -131,6 +136,20 @@ def api_account_maa(_q, body):
 
 def api_account_remove(_q, body):
     return {'removed': accounts.remove_account((body or {}).get('file'))}
+
+
+def api_account_import_maa(_q, body):
+    """从账号绑定的 MAA 目录导入干员识别结果（R2/R3）
+
+    body: {"file": "<账号文件名>"}（可省略，按上次账号→列表首个解析）。
+    同步任务，无 taskId；结果摘要（条数/来源/警告）直接返回给前端。
+    """
+    body = body or {}
+    file = _account_for(body.get('file'))
+    d = _maa_dir_for(file)
+    if not d:
+        raise ValueError('该账号没有绑定 MAA 目录，也没有设置全局默认')
+    return operbox.import_into(file, d)
 
 
 def api_refresh(_q, body):
@@ -224,11 +243,15 @@ def api_maa_probe(q, _body):
             profiles = list((cfg.get('Configurations') or {}).keys())
         except Exception:
             pass
+    ob = operbox.probe(d)
     return {
         'dir': d,
         'exeExists': os.path.isfile(exe),
         'configExists': os.path.isfile(cfg_path),
         'profiles': profiles,
+        'operbox': ob['exists'],
+        'operboxCount': ob['count'],
+        'operboxSyncTime': ob['syncTime'],
     }
 
 
@@ -344,6 +367,7 @@ ROUTES = {
     '/api/account/maa': api_account_maa,
     '/api/account/remove': api_account_remove,
     '/api/account/refresh': api_refresh,
+    '/api/account/import-maa': api_account_import_maa,
     '/api/search': api_search,
     '/api/activities': api_activities,
     '/api/gamedata': api_gamedata,

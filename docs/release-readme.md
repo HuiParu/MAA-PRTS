@@ -6,8 +6,8 @@
    建议 D 盘或桌面，不要放 `C:\Program Files`（会因权限写不了配置）
 2. 双击 `MAA-PRTS.exe`
 3. 首次启动会出现引导：
-   - 粘贴森空岛 token
    - 选择 MAA 根目录（就是含 `MAA.exe` 的那个文件夹）
+   - 粘贴森空岛 token
 
    两步都填好就能用了；暂时没有 MAA 也可以先点「稍后设置」。
 
@@ -36,15 +36,15 @@
 
 | 文件 | 内容 |
 |---|---|
-| `config\skland\tokens.json` | 你填的 token（DPAPI 加密，仅本机当前 Windows 用户可解） |
-| `config\skland\accounts\*.json` | 每个角色生成的练度配置 |
+| `config\<昵称> <服务器>.json` | 每个角色生成的练度配置，你填的 token 也密文存在这份文件里（DPAPI 加密，仅本机当前 Windows 用户可解） |
+| `config\tokens.json` | 旧版本迁移留下的密文 token 库（只读兜底，全部账号重新同步后可删） |
 | `config\settings.json` | MAA 路径、默认配置名等设置 |
 | `debug\app.log` | 运行日志（出问题先看这个，超过 2 MB 自动轮转） |
 
 全部只在本文件夹内，不会上传。删掉文件夹就彻底清除。
 
-token 密文绑定本机：换电脑拷过去解不开，到新机器重新粘贴一次 token 即可
-（账号练度 JSON 不加密，可以直接拷）。
+token 密文绑定本机：换电脑把账号 JSON 拷过去，练度数据还能看，但里面的
+token 解不开，到新机器重新粘贴一次 token 即可。
 
 写入 MAA 时会在 MAA 的 config 目录留一份配置备份
 （`gui.new.json.bak-app-时间戳`），只保留最近 2 份，多余的自动删掉。

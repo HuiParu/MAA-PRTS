@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """打包脚本：生成图标 + 调 PyInstaller 出 exe
 
-用法：python build.py
+用法：python tools/build.py
 入口：backend/main.py
 产物：build/MAA-PRTS/MAA-PRTS.exe（整个文件夹即发布包，拷走即用）
 构建只写 build/ 一个目录；中间产物放 build/work/，成功后自动删掉。
@@ -17,7 +17,7 @@ import shutil
 import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ICON = os.path.join(HERE, 'resources', 'assets', 'app.ico')
 
 

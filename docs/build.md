@@ -2,7 +2,7 @@
 
 ## 用途
 
-仓库里唯一的构建输出目录，由 `打包.bat` / `python build.py` 生成：
+仓库里唯一的构建输出目录，由 `打包.bat` / `python tools/build.py` 生成：
 
 ```
 build/
@@ -20,14 +20,14 @@ build/
 
 ## 生成
 
-双击根目录 `打包.bat`（或 `python build.py`）。每次打包会先清空旧产物再全量重建，
+双击根目录 `打包.bat`（或 `python tools/build.py`）。每次打包会先清空旧产物再全量重建，
 结束后目录里只剩 `MAA-PRTS/`。
 
 ## 数据放在哪
 
 **无论在仓库里直接运行 exe，还是把 `build/MAA-PRTS` 整个拷到别处**：数据一律写在
-exe 同级的 `config/`（账号数据在其 `skland/` 子目录），日志在 exe 同级的 `debug/`，
-即插即用。程序不向上找项目根，也不会往系统目录或用户目录写东西。
+exe 同级的 `config/`（账号 json、token 密文、设置都在这一层），日志在 exe 同级的
+`debug/`，即插即用。程序不向上找项目根，也不会往系统目录或用户目录写东西。
 
 注意：exe 一旦运行过，`build/MAA-PRTS/` 里就会多出 `config/`、`debug/`（含加密
 token）。**压缩发版请用刚构建好的全新产物**，或压缩前先删掉这两个目录。
