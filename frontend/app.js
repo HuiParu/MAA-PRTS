@@ -181,6 +181,9 @@ function bindAccountOrder(box) {
 
   const saveOrder = async () => {
     const files = $$('.acct', box).map(b => b.dataset.file);
+    // 内存数组同步成新序——否则下一次 renderAccounts（点选别的账号就会触发）
+    // 还按旧序重建，界面看起来像「拖完又弹回去」
+    S.accounts = files.map(f => S.accounts.find(a => a.file === f)).filter(Boolean);
     try {
       S.settings = (await api('/api/settings', { accountOrder: files })).settings;
     } catch (e) { /* 保存失败不回滚视觉顺序，刷新后会还原 */ }
