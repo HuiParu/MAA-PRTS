@@ -157,7 +157,7 @@ function renderAccounts() {
     const ch = (a.nickName || '?').replace(/[#＃].*$/, '').slice(0, 1);
     return `
       <button class="acct ${a.file === S.current ? 'active' : ''}" data-file="${esc(a.file)}"
-        title="点击选中；长按 0.35 秒可拖动排序">
+        draggable="true" title="点击选中，拖动可排序">
         <span class="avatar ${cls}">${esc(ch)}</span>
         <span class="acct-main">
           <span class="acct-name">${esc(a.nickName)}</span>
@@ -167,17 +167,13 @@ function renderAccounts() {
   }).join('');
 }
 
-/* 账号列表排序：长按 350ms 进入拖拽改序（普通点击选中不受影响）。
-   到点前挪动超过 6px 视为普通点击取消长按；拖完的这次 click 不再触发选中。
-   顺序存 settings.accountOrder（list_accounts 按它排，没排过的账号按
-   默认序跟在后面）。绑在静态容器 #account-list 上，renderAccounts 重建
-   内部节点不影响。 */
+/* 账号列表排序：原生 HTML5 拖拽直接改序（同作业集 bindBasketDrag 的做法，
+   浏览器自己区分「点一下选中」和「按下拖动」，无需长按门槛、拖完也不会
+   补发 click）。顺序存 settings.accountOrder（list_accounts 按它排，
+   没排过的账号按默认序跟在后面）。绑在静态容器 #account-list 上，
+   renderAccounts 重建内部节点不影响。 */
 function bindAccountOrder(box) {
-  const HOLD_MS = 350;
-  const MOVE_CANCEL = 6;
-  let holdTimer = null;
-  let armed = false;
-  let dragged = false;
+  let dragEl = null;
 
   const saveOrder = async () => {
     const files = $$('.acct', box).map(b => b.dataset.file);
@@ -191,52 +187,32 @@ function bindAccountOrder(box) {
 
   box.addEventListener('click', e => {
     const b = e.target.closest('.acct');
-    if (!b) return;
-    if (dragged) { dragged = false; return; }
-    selectAccount(b.dataset.file);
+    if (b) selectAccount(b.dataset.file);
   });
 
-  box.addEventListener('pointerdown', e => {
+  box.addEventListener('dragstart', e => {
     const item = e.target.closest('.acct');
-    if (!item || e.button !== 0) return;
-    const x0 = e.clientX, y0 = e.clientY;
-    armed = false;
-    dragged = false;
-    clearTimeout(holdTimer);
-    holdTimer = setTimeout(() => {
-      armed = true;
-      item.classList.add('dragging');
-      document.body.classList.add('acct-reorder');
-    }, HOLD_MS);
-
-    const move = ev => {
-      if (armed) {
-        ev.preventDefault();
-        dragged = true;
-        const rows = $$('.acct', box).filter(r => r !== item);
-        const next = rows.find(r => {
-          const rc = r.getBoundingClientRect();
-          return ev.clientY < rc.top + rc.height / 2;
-        });
-        if (next) box.insertBefore(item, next);
-        else box.appendChild(item);
-      } else if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > MOVE_CANCEL) {
-        clearTimeout(holdTimer);   // 没按住就动了：当普通点击，取消长按
-      }
-    };
-    const up = () => {
-      clearTimeout(holdTimer);
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      if (armed) {
-        item.classList.remove('dragging');
-        document.body.classList.remove('acct-reorder');
-        if (dragged) saveOrder();
-      }
-      armed = false;
-    };
-    window.addEventListener('pointermove', move, { passive: false });
-    window.addEventListener('pointerup', up);
+    if (!item) return;
+    dragEl = item;
+    item.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', item.dataset.file); } catch (_) { }
+  });
+  box.addEventListener('dragend', () => {
+    if (!dragEl) return;
+    dragEl.classList.remove('dragging');
+    dragEl = null;
+    saveOrder();
+  });
+  box.addEventListener('dragover', e => {
+    if (!dragEl) return;
+    const el = e.target.closest('.acct');
+    if (!el || el === dragEl) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const r = el.getBoundingClientRect();
+    const after = (e.clientY - r.top) > r.height / 2;
+    box.insertBefore(dragEl, after ? el.nextSibling : el);
   });
 }
 
