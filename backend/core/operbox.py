@@ -196,3 +196,82 @@ def import_into(file: str, maa_dir: str) -> dict:
         'stats': snap['stats'],
         'sync': snap['sync'],
     }
+
+
+def _safe_stem(s: str) -> str:
+    """文件名可用段：去掉 Windows 非法字符与控制符，限长"""
+    kept = ''.join(c for c in s if c not in '<>:"/\\|?*' and ord(c) >= 32)
+    return (kept.strip().rstrip('.') or '本地账号')[:40]
+
+
+def create_from_dir(maa_dir: str, alias: str = '') -> dict:
+    """不用森空岛 token：直接用 MAA 目录的干员识别结果建一个本地账号。
+
+    解析/统计与 import_into 同一套；区别在账号文件是新建的：
+      - account.uid 用合成值（list_accounts 以有无 uid 判定账号有效性），
+        nickName 取备注或 MAA 目录名；
+      - 不写 skd 段——没有 token，也就不参与森空岛同步；
+      - 文件名 <备注或目录名>.json，重名顺延 (2)(3)。
+    """
+    path = operbox_path(maa_dir)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(
+            'MAA 目录下没有 data/OperBoxData.json（先在 MAA 小工具里跑一次干员识别）')
+    data = load(path)
+    if data.get('done') is False:
+        raise ValueError('MAA 干员识别未完成（done=false），'
+                         '请在 MAA 小工具里重跑一次识别再导入')
+    tables = updater.Tables(cache_path=settings.subprof_cache())
+    built = build_chars(data, tables)
+    chars = built['chars']
+    if not chars:
+        raise ValueError('OperBoxData.json 解析失败（own_opers 为空或全部条目无法识别）')
+
+    d = settings._norm_dir(maa_dir) or maa_dir
+    folder = os.path.basename(d.rstrip('\\/')) or 'MAA'
+    alias = (alias or '').strip()
+    base = _safe_stem(alias or folder)
+    name = base + '.json'
+    n = 2
+    accounts_dir = settings.accounts_dir()
+    while (os.path.exists(os.path.join(accounts_dir, name))
+           or name in updater.NON_ACCOUNT_JSON):
+        name = '%s(%d).json' % (base, n)
+        n += 1
+
+    snap = {
+        'account': {
+            'uid': 'local-' + _safe_stem(folder).replace(' ', ''),
+            'nickName': alias or folder,
+            'alias': alias,
+            'channelName': '本地导入',
+        },
+        'maa': {'dir': d},
+        'chars': chars,
+    }
+    missing = updater.build_missing(chars, tables)
+    snap['stats'] = updater.build_stats(chars, missing, tables, 0)
+    snap['missing'] = missing
+    snap['sync'] = {
+        'syncedAt': updater.now_iso(),
+        'source': 'maa-operbox',
+        'operbox': {
+            'path': path,
+            'source': data.get('source'),
+            'syncTime': data.get('syncTime'),
+            'done': data.get('done'),
+        },
+    }
+    accounts.save_account(name, snap)
+    return {
+        'file': name,
+        'path': path,
+        'source': data.get('source'),
+        'syncTime': data.get('syncTime'),
+        'done': data.get('done'),
+        'imported': len(chars),
+        'skipped': built['skipped'],
+        'warnings': built['warnings'],
+        'stats': snap['stats'],
+        'sync': snap['sync'],
+    }

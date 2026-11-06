@@ -152,6 +152,20 @@ def api_account_import_maa(_q, body):
     return operbox.import_into(file, d)
 
 
+def api_account_create_from_maa(_q, body):
+    """不用森空岛 token：用 MAA 目录的干员识别结果直接建本地账号
+
+    body: {"dir": "<MAA 根目录>", "alias": "<备注，可选>"}。
+    同步任务，无 taskId；建号摘要（文件名/条数/警告）直接返回给前端。
+    """
+    body = body or {}
+    d = settings._norm_dir((body.get('dir') or '').strip())
+    if not d:
+        raise ValueError('缺少 MAA 目录参数')
+    settings.remember_maa_dir(d)
+    return operbox.create_from_dir(d, (body.get('alias') or '').strip())
+
+
 def api_refresh(_q, body):
     body = body or {}
     token = (body.get('token') or '').strip() or None
@@ -368,6 +382,7 @@ ROUTES = {
     '/api/account/remove': api_account_remove,
     '/api/account/refresh': api_refresh,
     '/api/account/import-maa': api_account_import_maa,
+    '/api/account/create-from-maa': api_account_create_from_maa,
     '/api/search': api_search,
     '/api/activities': api_activities,
     '/api/gamedata': api_gamedata,

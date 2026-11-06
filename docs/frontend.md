@@ -63,8 +63,8 @@ api('/api/xxx', body)   // 统一包成 {ok, data|error}
 | `toggleBasket()` | 窄屏抽屉开关（≤1180px），控制 `.basket.show`、遮罩与浮动按钮 |
 | `renderResult()` | 单关卡卡片 / 活动关卡列表两套版式 |
 | `renderBasket()` | 右侧作业集（含拖动排序） |
-| `openOnboarding()` | 首次启动的两步引导：先选 MAA 根目录、后森空岛 token（含 token 获取说明） |
-| `openAddAccount()` | 「添加账号」两页向导，页序与首次引导一致：先选这个账号用的 MAA、后森空岛 token |
+| `openAccountWizard(mode)` | 账号向导共用组件（首次引导 `onboard` / 添加账号 `add`）：第 1 页选 MAA 根目录，第 2 页二选一——森空岛 token（一行一个批量导入，成功后自动从 MAA 导入练度）或「直接从选定的 MAA 导入」（不用 token，调 `POST /api/account/create-from-maa` 建本地账号） |
+| `openOnboarding()` / `openAddAccount()` | 上面的薄包装（引导多一个「稍后设置」，成功后把目录存为全局默认） |
 | `openSettings()` | 设置弹窗 |
 | `pollTask()` | 任务日志轮询（同步账号、写入 MAA 共用） |
 
@@ -99,9 +99,11 @@ api('/api/xxx', body)   // 统一包成 {ok, data|error}
 
 `/api/bootstrap` 返回 `setup.needsToken`（没有账号）与 `setup.needsMaa`（找不到 MAA.exe）。
 `boot()` 在「没有账号」或「没填 MAA 目录」时弹引导；用户点「稍后设置」后本次会话不再弹。
-首次引导与「添加账号」两个向导页序一致：第 1 页 MAA、第 2 页森空岛 token。
+首次引导与「添加账号」是同一个向导组件（`openAccountWizard`），只差标题文案与
+「稍后设置」按钮：第 1 页选 MAA 根目录，第 2 页二选一（森空岛 token / 直接从选定的
+MAA 导入建号），两种入口行为完全一致。
 
-引导页与「添加账号」弹窗共用同一段 token 获取说明（`TOKEN_GUIDE` 常量）：
+向导共用同一段 token 获取说明（`TOKEN_GUIDE` 常量）：
 引导用户自己去森空岛社区登录后从 `zonai.skland.com` 的请求头里取 token，
 **不放任何示例 token**（示例容易被当成可直接用的值抄走）。
 

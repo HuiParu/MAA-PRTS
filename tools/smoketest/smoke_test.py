@@ -386,6 +386,64 @@ def check_operbox_parse(tmp):
     assert snap['skins'] == [{'id': 's1'}] and snap['stats']['skinCount'] == 1
 
 
+# ---------------------------------------------------------------- B15 从 MAA 直接建号
+def check_create_from_maa(tmp):
+    """向导方式二：不用森空岛 token，用 MAA 识别结果直接建本地账号
+
+    建出的账号要能被 list_accounts 认出（合成 uid + 昵称取目录名/备注），
+    不写 skd 段（load_tokens 不把它当森空岛账号），重名顺延 (2)(3)，
+    done=false 残缺名单整单拒绝。
+    """
+    from core import accounts, operbox, resources
+
+    table = resources.char_table() or {}
+    cid, name = next(((k, v['name']) for k, v in table.items()
+                      if isinstance(v, dict) and v.get('name')), ('char_x', 'x'))
+    maa = os.path.join(tmp, 'MAA-fake')
+    os.makedirs(os.path.join(maa, 'data'), exist_ok=True)
+
+    def write_operbox(done):
+        with open(os.path.join(maa, 'data', 'OperBoxData.json'), 'w', encoding='utf-8') as f:
+            json.dump({'done': done, 'source': 'local', 'syncTime': '2026-11-06T12:00:00+08:00',
+                       'own_opers': [{'id': cid, 'name': name, 'elite': 2, 'level': 90,
+                                      'own': True, 'potential': 0, 'rarity': 6}]},
+                      f, ensure_ascii=False)
+
+    _reset_config(tmp)
+    write_operbox(True)
+    r = operbox.create_from_dir(maa, '')
+    assert r['imported'] == 1 and r['file'] == 'MAA-fake.json', r['file']
+    snap = accounts.get_account(r['file'])
+    assert snap['account']['uid'].startswith('local-'), snap['account']
+    assert snap['account']['nickName'] == 'MAA-fake', '没给备注时昵称应取 MAA 目录名'
+    assert snap['account']['channelName'] == '本地导入'
+    assert 'skd' not in snap, '本地账号不该有 skd 段'
+    assert snap['maa']['dir'].endswith('MAA-fake'), snap['maa']
+    assert snap['chars'] and snap['chars'][0]['charId'] == cid
+    assert snap['stats']['charCount'] == 1
+    assert any(x['file'] == r['file'] for x in accounts.list_accounts()), '新建账号没进账号列表'
+    # 无 skd 段 → 不产生任何 token（不参与森空岛同步）
+    assert accounts.load_tokens() == [], '本地账号不该被当成森空岛账号'
+
+    # 重名顺延：同目录再建一个 → MAA-fake(2).json；带备注则用备注命名
+    r2 = operbox.create_from_dir(maa, '')
+    assert r2['file'] == 'MAA-fake(2).json', r2['file']
+    r3 = operbox.create_from_dir(maa, '小号')
+    assert r3['file'] == '小号.json', r3['file']
+    snap3 = accounts.get_account(r3['file'])
+    assert snap3['account']['nickName'] == '小号' and snap3['account']['alias'] == '小号'
+
+    # done=false（识别中断）整单拒绝，不落任何文件
+    write_operbox(False)
+    try:
+        operbox.create_from_dir(maa, '')
+    except ValueError as e:
+        assert '未完成' in str(e), e
+    else:
+        raise AssertionError('done=false 的残缺名单不该建号')
+    assert not os.path.isfile(os.path.join(tmp, 'config', 'MAA-fake(3).json'))
+
+
 def _assert_maa_parsable(content):
     """按 MaaCore CopilotConfig::parse 的致命校验复检，非法就抛 AssertionError
 
@@ -796,6 +854,7 @@ def main():
         r.check('B12 v1 作业默认练度（压级号不再误推）', check_copilot_v1_default_req)
         r.check('B13 旧布局 config/skland 压平迁移', lambda: check_layout_migration(settings_mod, tmp))
         r.check('B14 MAA 干员 JSON 解析与练度映射', lambda: check_operbox_parse(tmp))
+        r.check('B15 从 MAA 直接建号（无 token）', lambda: check_create_from_maa(tmp))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
