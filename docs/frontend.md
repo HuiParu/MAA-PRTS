@@ -55,9 +55,9 @@ api('/api/xxx', body)   // 统一包成 {ok, data|error}
 | 函数 | 负责区块 |
 |---|---|
 | `renderAccounts()` | 左侧账号列表 |
-| `renderHero()` | 顶部账号信息卡 + 四个统计块（「缺卡」是可点按钮）；有选中账号时显示「从 MAA 导入干员信息」按钮 |
+| `renderHero()` | 顶部账号信息卡 + 四个统计块（「缺卡」是可点按钮）；有选中账号时显示「从 MAA 更新干员信息」按钮 |
 | `showMissing()` | 缺卡清单弹窗，按星级分组，只显示名字 |
-| `importFromMaa()` | 「从 MAA 导入干员信息」：确认弹窗（目录 + OperBoxData.json）→ `POST /api/account/import-maa` → 摘要弹窗并刷新当前账号；本地识别不含技能/专精/模组会明示 |
+| `importFromMaa()` | 「从 MAA 更新干员信息」（已有账号的手动更新入口）：确认弹窗（目录 + OperBoxData.json）→ `POST /api/account/import-maa` → 摘要弹窗并刷新当前账号；本地识别不含技能/专精/模组会明示 |
 | `renderUpdate()` | 资源包更新提示条（顶部的绿色条） |
 | `renderQuick()` | 快捷活动胶囊：活动名 + 关卡代号字母 + NEW 角标 |
 | `toggleBasket()` | 窄屏抽屉开关（≤1180px），控制 `.basket.show`、遮罩与浮动按钮 |

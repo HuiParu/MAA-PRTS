@@ -197,7 +197,7 @@ async function selectAccount(file, silent) {
 function renderHero() {
   const d = S.detail;
   const importBtn = $('#btn-import-maa');
-  if (importBtn) importBtn.hidden = !d;   // 有选中账号才给「从 MAA 导入干员信息」入口
+  if (importBtn) importBtn.hidden = !d;   // 有选中账号才给「从 MAA 更新干员信息」入口
   if (!d) return;
   const a = d.account || {}, st = d.stats || {};
   const name = a.nickName || '未知账号';
@@ -252,10 +252,11 @@ function showMissing() {
   `);
 }
 
-/* ------------------------------------------------------------ 从 MAA 导入干员信息
-   用当前账号绑定的 MAA 目录里的干员识别结果（data/OperBoxData.json）
-   更新练度：不需要森空岛 token，后端同步处理直接返回结果（不走任务轮询）。
-   注意本地识别不含技能/专精/模组，导入后这类要求按未练处理，须明示。 */
+/* ------------------------------------------------------------ 从 MAA 更新干员信息
+   已有账号的手动更新入口：用当前账号绑定的 MAA 目录里的干员识别结果
+   （data/OperBoxData.json）刷新练度。不需要森空岛 token，后端同步处理
+   直接返回结果（不走任务轮询）。注意本地识别不含技能/专精/模组，
+   更新后这类要求按未练处理，须明示。（向导里新建账号的场景仍是「导入」） */
 async function importFromMaa() {
   if (!S.current) { toast('先在左侧选择一个账号', 'warn'); return; }
   // 与后端 _maa_dir_for 同语义：账号绑定的目录优先，没绑定回退全局默认
@@ -271,36 +272,36 @@ async function importFromMaa() {
   const operboxFile = dir.replace(/[\\/]+$/, '') + '\\data\\OperBoxData.json';
   const who = (((S.detail || {}).account || {}).nickName) || S.current;
   modal(`
-    <h3>从 MAA 导入干员信息</h3>
+    <h3>从 MAA 更新干员信息</h3>
     <div class="sub">用这个 MAA 的干员识别结果更新「${esc(who)}」的练度，不需要森空岛 token。</div>
     <div class="path-list">
       <div class="path-item"><span>MAA 目录</span><code>${esc(dir)}</code></div>
       <div class="path-item"><span>识别文件</span><code>${esc(operboxFile)}</code></div>
       <div class="path-item"><span>识别结果</span><code>${
-        pr.operboxCount != null ? pr.operboxCount + ' 名干员' : '内容待导入时解析'
+        pr.operboxCount != null ? pr.operboxCount + ' 名干员' : '内容待更新时解析'
       }${pr.operboxSyncTime ? ' · ' + esc(fmtTime(pr.operboxSyncTime)) + ' 识别' : ''}</code></div>
     </div>
-    <div class="onb-hint bad">! 本地识别不含技能、专精、模组数据，导入后这类要求会按未练处理。</div>
+    <div class="onb-hint bad">! 本地识别不含技能、专精、模组数据，更新后这类要求会按未练处理。</div>
     <div class="modal-foot">
       <button class="btn-plain" data-close>取消</button>
-      <button class="btn-solid" id="btn-import-go">开始导入</button>
+      <button class="btn-solid" id="btn-import-go">开始更新</button>
     </div>
   `, {
     onMount(el, close) {
       $('#btn-import-go', el).addEventListener('click', async () => {
         const btn = $('#btn-import-go', el);
         btn.disabled = true;
-        btn.textContent = '导入中…';
+        btn.textContent = '更新中…';
         try {
           const r = await api('/api/account/import-maa', { file: S.current });
           const st = r.stats || {};
           const warns = (r.warnings || []).map(w => `<div class="onb-hint bad">! ${esc(w)}</div>`).join('');
           close();
           modal(`
-            <h3>导入完成</h3>
+            <h3>更新完成</h3>
             <div class="sub">已用 MAA 的干员识别结果更新 ${esc(r.file || S.current)}。</div>
             <div class="path-list">
-              <div class="path-item"><span>导入干员</span><code>${r.imported || 0} 名${r.skipped ? '（跳过 ' + r.skipped + ' 名）' : ''}</code></div>
+              <div class="path-item"><span>更新干员</span><code>${r.imported || 0} 名${r.skipped ? '（跳过 ' + r.skipped + ' 名）' : ''}</code></div>
               <div class="path-item"><span>数据来源</span><code>${r.source === 'yituliu' ? '一图流' : 'MAA 本地识别'}</code></div>
               <div class="path-item"><span>识别时间</span><code>${esc(fmtTime(r.syncTime))}</code></div>
               <div class="path-item"><span>练度概况</span><code>${st.charCount || 0} 干员 · 精二 ${st.e2Count || 0} · 六星 ${st.sixStarCount || 0} · 缺卡 ${st.missingCount || 0}</code></div>
@@ -308,13 +309,13 @@ async function importFromMaa() {
             ${warns}
             <div class="modal-foot"><button class="btn-solid" data-close>知道了</button></div>
           `);
-          toast('已从 MAA 导入 ' + (r.imported || 0) + ' 名干员');
+          toast('已从 MAA 更新 ' + (r.imported || 0) + ' 名干员');
           const acc = await api('/api/accounts');
           S.accounts = acc.accounts;
           renderAccounts();
           await selectAccount(S.current, true);
         } catch (e) {
-          toast('导入失败：' + e.message, 'err', 6000);
+          toast('更新失败：' + e.message, 'err', 6000);
           btn.disabled = false;
           btn.textContent = '重试';
         }
