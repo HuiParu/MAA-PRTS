@@ -130,7 +130,8 @@ def build_chars(data: dict, tables) -> dict:
         })
 
     if (data.get('source') or 'local') != 'yituliu':
-        warnings.append('source=%s：MAA 本地识别不含技能/专精/模组数据'
+        warnings.append('source=%s：MAA 本地识别不含技能/专精/模组数据，'
+                        '作业匹配只比精英化与等级（技能模组按已拥有处理）'
                         % (data.get('source') or 'local'))
     chars.sort(key=lambda r: (-r['rarity'], -r['elite'], -r['level'], r['name']))
     return {'chars': chars, 'skipped': skipped, 'warnings': warnings}

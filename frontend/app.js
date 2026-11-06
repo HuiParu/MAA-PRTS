@@ -330,7 +330,7 @@ async function importFromMaa() {
         pr.operboxCount != null ? pr.operboxCount + ' 名干员' : '内容待更新时解析'
       }${pr.operboxSyncTime ? ' · ' + esc(fmtTime(pr.operboxSyncTime)) + ' 识别' : ''}</code></div>
     </div>
-    <div class="onb-hint bad">! 本地识别不含技能、专精、模组数据，更新后这类要求会按未练处理。</div>
+    <div class="onb-hint bad">! 本地识别不含技能、专精、模组数据。更新后作业匹配只比精英化与等级，技能模组一律按已拥有处理，可能推给你实际打不了的作业——抄之前请在 MAA 里确认。</div>
     <div class="modal-foot">
       <button class="btn-plain" data-close>取消</button>
       <button class="btn-solid" id="btn-import-go">开始更新</button>
@@ -996,7 +996,9 @@ async function showOpDetail(op) {
     onMount(el, close) {
       $('#copy-code', el).addEventListener('click', () => copyText(op.maaCode, 'MAA 代码已复制'));
       $('#add-op', el).addEventListener('click', () => { addToBasket(op); close(); });
-      api('/api/op?id=' + op.id).then(d => {
+      // 带上 file：MAA 导入的账号没有技能/模组数据，详情里不展示这类要求
+      const opUrl = '/api/op?id=' + op.id + (S.current ? '&file=' + encodeURIComponent(S.current) : '');
+      api(opUrl).then(d => {
         const body = d.content || {};
         const rows = (d.opers || []).map(o => {
           const req = o.requirements || {};
@@ -1011,8 +1013,12 @@ async function showOpDetail(op) {
             <span style="color:var(--text-3);font-size:11.5px">${esc(bits.join(' · ') || '无特殊要求')}</span>
           </div>`;
         }).join('');
+        const skillless = (d.opers || []).some(o => o.skillKnown === false);
         $('#op-detail-body', el).innerHTML =
           (rows || '<div style="color:var(--text-3)">无干员信息</div>') +
+          (skillless
+            ? '<div class="onb-hint bad" style="margin-top:10px">! 该账号用 MAA 干员识别建号，没有技能 / 专精 / 模组数据：判定只比精英化与等级，技能模组按已拥有处理，实际打之前请在 MAA 里确认。</div>'
+            : '') +
           `<div style="margin-top:12px;font-size:11.5px;color:var(--text-3)">
              动作 ${d.actions} 条 · 关卡 ${esc(d.stageName || '')}
              <br>MAA 代码：<code style="color:var(--mint)">${esc(d.maaCode)}</code>
@@ -1432,7 +1438,8 @@ function openAccountWizard(mode) {
     maaGoBtn.disabled = !operboxReady;
     if (operboxReady) {
       maaHint.className = 'onb-hint ok';
-      maaHint.textContent = `✓ 有练度数据（${r.operboxCount != null ? r.operboxCount + ' 名' : ''}${r.operboxSyncTime ? '，' + String(r.operboxSyncTime).slice(0, 10) + ' 识别' : ''}），点左边按钮直接建号`;
+      maaHint.innerHTML = `✓ 有练度数据（${r.operboxCount != null ? r.operboxCount + ' 名' : ''}${r.operboxSyncTime ? '，' + String(r.operboxSyncTime).slice(0, 10) + ' 识别' : ''}），点左边按钮直接建号`
+        + `<br>! 识别结果不含技能 / 专精 / 模组，建号后作业匹配只比精英化与等级，技能模组按已拥有处理`;
     } else if (r) {
       maaHint.className = 'onb-hint bad';
       maaHint.textContent = '! 该 MAA 还没有干员识别数据（data/OperBoxData.json）——先在 MAA 小工具里跑一次干员识别，或改用方式一';
@@ -1658,6 +1665,9 @@ function openAccountWizard(mode) {
       await saveOnboardDir(dir);
       const r = await api('/api/account/create-from-maa', { dir, alias });
       taskLogLine(logBox, `✓ 已创建账号 ${r.file}（${r.imported || 0} 名干员${r.skipped ? '，跳过 ' + r.skipped + ' 名' : ''}，来源 ${r.source === 'yituliu' ? '一图流' : 'MAA 本地识别'}）`);
+      if (r.source !== 'yituliu') {
+        taskLogLine(logBox, '! MAA 本地识别不含技能 / 专精 / 模组：作业匹配只比精英化与等级，技能模组按已拥有处理，抄之前请在 MAA 里确认', true);
+      }
       (r.warnings || []).forEach(w => taskLogLine(logBox, '! ' + w, true));
       const acc = await api('/api/accounts');
       S.accounts = acc.accounts;
