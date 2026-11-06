@@ -80,7 +80,7 @@ def _migrate_legacy_skland():
             shutil.move(src, dst)
         except Exception:
             pass
-    # 搬空了才删目录；README.md 是旧版的入库说明，一并清掉（新版文档在 config/skland/）
+    # 搬空了才删目录；README.md 是旧版的入库说明，一并清掉（新版文档在 docs/）
     try:
         left = [n for n in os.listdir(old) if n != 'README.md']
         if not left:

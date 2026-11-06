@@ -134,7 +134,7 @@ def save_maa_meta(file: str, patch: dict) -> dict:
 # ---------------------------------------------------------------- token 存储
 # config/skland/tokens.json：多账号列表，逐条经 Windows DPAPI（CurrentUser）
 # 加密后存放，密钥绑定本机 + 当前 Windows 用户，拷到别的电脑无法解密。
-# 文件格式与迁移说明见 config/skland/README.md。
+# 文件格式与迁移说明见 docs/config-skland.md。
 
 from . import vault  # noqa: E402
 

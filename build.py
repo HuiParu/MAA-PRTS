@@ -84,7 +84,7 @@ def make_icon():
 def build():
     icon = make_icon()
     # 构建只写 build/ 一个目录：work/ 是中间产物，MAA-PRTS/ 是发布包本体。
-    # 每次全清这两个子目录，保留入库的 build/README.md。
+    # 每次全清这两个子目录（build/ 本身无入库文件，全部是产物）。
     build_dir = os.path.join(HERE, 'build')
     work_dir = os.path.join(build_dir, 'work')
     for d in (work_dir, os.path.join(build_dir, 'MAA-PRTS')):

@@ -17,7 +17,7 @@
 MAA-PRTS\
   MAA-PRTS.exe
   _internal\        ← 必须一起保留
-  README.txt        ← token 获取步骤 + 常见问题
+  README.md         ← token 获取步骤 + 常见问题
 ```
 
 首次启动会引导两步：粘贴森空岛 token → 选择 MAA 根目录（含 `MAA.exe` 的那一层）。
@@ -94,6 +94,7 @@ MAA-PRTS-1/
 ├── frontend/            页面（HTML/CSS/JS），由后端本地服务托管
 ├── backend/             服务端：窗口、HTTP 接口、匹配算法、MAA 读写
 ├── resources/           内置游戏资源包（干员表/关卡表）与打包脚本
+├── docs/                各目录的说明文档（backend.md、config-skland.md 等）
 ├── config/              ★ 用户数据：settings.json、skland/（加密 token、账号练度）
 ├── debug/               运行日志 app.log（可随手删）
 ├── build/               构建产物（MAA-PRTS/ 发布包；中间文件用后即删）
@@ -103,7 +104,7 @@ MAA-PRTS-1/
 └── README.md
 ```
 
-每个目录下都有自己的 `README.md`，写明用途和实现细节。
+各目录的用途与实现细节集中写在 `docs/` 下（如 `backend.md`、`config-skland.md`、`tools-smoketest.md`）。
 
 ---
 
@@ -157,7 +158,7 @@ python resources\make_pack.py --excel "D:\ArknightsGameResource\gamedata\excel"
 ```
 
 同时新活动会被顶到快捷栏最前面并标上 `NEW`。提示条点「知道了」才消失，
-不点就每次启动都提醒一次。详见 `resources\README.md`、`backend\README.md`。
+不点就每次启动都提醒一次。详见 `docs\resources.md`、`docs\backend.md`。
 
 ---
 
