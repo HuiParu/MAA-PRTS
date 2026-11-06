@@ -1207,6 +1207,17 @@ function pollTask(tid, root) {
   });
 }
 
+/* 向向导的任务日志框补一行提示（pollTask 只写后台任务日志，
+   同步之外的动作——绑定 MAA、导入干员信息——的结果写这里） */
+function taskLogLine(box, text, bad) {
+  if (!box) return;
+  const div = document.createElement('div');
+  if (bad) div.className = 'err';
+  div.textContent = text;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
 /* ------------------------------------------------------------ 添加账号 */
 const TOKEN_GUIDE = `
   <b>三步拿到 token</b>
@@ -1345,7 +1356,7 @@ function openAddAccount() {
         state.className = 'onb-hint ok';
         state.innerHTML = `✓ 找到 MAA.exe，配置 ${r.profiles.length} 个：<code>${esc(r.profiles.slice(0, 4).join(' / '))}</code>`
           + (r.operbox
-            ? `<br>该 MAA 有练度数据（${r.operboxCount != null ? r.operboxCount + ' 名' : ''}${r.operboxSyncTime ? '，' + esc(String(r.operboxSyncTime).slice(0, 10)) + ' 识别' : ''}），账号添加后可「从 MAA 导入干员信息」`
+            ? `<br>该 MAA 有练度数据（${r.operboxCount != null ? r.operboxCount + ' 名' : ''}${r.operboxSyncTime ? '，' + esc(String(r.operboxSyncTime).slice(0, 10)) + ' 识别' : ''}），账号添加后自动导入`
             : '');
       } else if (r.exeExists) {
         state.className = 'onb-hint bad';
@@ -1438,9 +1449,11 @@ function openAddAccount() {
     const alias = $('#onb-alias', m).value.trim();
     const dir = input.value.trim();
     if (!tokens.length) { toast('先把森空岛 token 粘进来', 'warn'); showPage(2); $('#onb-token', m).focus(); return; }
-    if (!pendingRetry.length && dir) {
+    let operboxReady = false;
+    if (dir) {
       const ok = await probe();
       if (!ok || !ok.exeExists) { toast('MAA 目录没通过检测，改一下再试', 'err'); showPage(1); return; }
+      operboxReady = !!ok.operbox;
     }
     pendingRetry = [];
     btn.disabled = true;
@@ -1465,11 +1478,28 @@ function openAddAccount() {
         failed.push({ token: tokens[i], error: e.message });
       }
     }
+    let importedTotal = 0;
     if (added.length) {
       // 给新加的账号们绑定选定的 MAA；留空就不绑定（回退全局默认）
       if (dir) {
         for (const file of added) {
           if (file) await api('/api/account/maa', { file, patch: { dir } }).catch(() => { });
+        }
+        // 新账号顺手导入 MAA 里的干员识别结果（不依赖 token；失败不影响账号添加）
+        if (operboxReady) {
+          for (const file of added) {
+            if (!file) continue;
+            taskLogLine(logBox, `从 MAA 导入干员信息（${file}）…`);
+            try {
+              const r = await api('/api/account/import-maa', { file });
+              importedTotal += r.imported || 0;
+              taskLogLine(logBox, `✓ 已导入 ${r.imported || 0} 名干员${r.skipped ? `（跳过 ${r.skipped} 名）` : ''}，来源 ${r.source === 'yituliu' ? '一图流' : 'MAA 本地识别'}`);
+            } catch (e) {
+              taskLogLine(logBox, `✗ ${file} 干员信息导入失败：${e.message}`, true);
+            }
+          }
+        } else {
+          taskLogLine(logBox, '! 该 MAA 还没有干员识别数据（data/OperBoxData.json），可先在 MAA 小工具里识别一次，之后从森空岛页手动导入', true);
         }
       }
       const acc = await api('/api/accounts');
@@ -1492,7 +1522,8 @@ function openAddAccount() {
       return;
     }
     close();
-    toast(many ? `${added.length} 个账号已添加` : '账号已添加');
+    const extra = importedTotal > 0 ? '，练度已从 MAA 导入' : '';
+    toast(many ? `${added.length} 个账号已添加${extra}` : `账号已添加${extra}`);
     const target = added[added.length - 1];
     if (target) await selectAccount(target, true);
   });
@@ -1676,7 +1707,10 @@ function openOnboarding() {
       const r = await api('/api/maa/probe?dir=' + encodeURIComponent(dir));
       if (r.exeExists && r.configExists) {
         state.className = 'onb-hint ok';
-        state.innerHTML = `✓ 找到 MAA.exe，配置 ${r.profiles.length} 个：<code>${esc(r.profiles.slice(0, 4).join(' / '))}</code>`;
+        state.innerHTML = `✓ 找到 MAA.exe，配置 ${r.profiles.length} 个：<code>${esc(r.profiles.slice(0, 4).join(' / '))}</code>`
+          + (r.operbox
+            ? `<br>该 MAA 有练度数据（${r.operboxCount != null ? r.operboxCount + ' 名' : ''}${r.operboxSyncTime ? '，' + esc(String(r.operboxSyncTime).slice(0, 10)) + ' 识别' : ''}），账号添加后自动导入`
+            : '');
       } else if (r.exeExists) {
         state.className = 'onb-hint bad';
         state.textContent = '! 找到 MAA.exe，但还没有 config/gui.new.json（先启动一次 MAA 就好）';
@@ -1768,13 +1802,30 @@ function openOnboarding() {
       const result = await pollTask(taskId, m);
       const acc = await api('/api/accounts');
       S.accounts = acc.accounts;
+      const target = (result && result.newest) || (S.accounts[0] && S.accounts[0].file);
+      // 首个账号也记下自己用的 MAA，与后续添加的账号同规则
+      if (target && maaDir) await api('/api/account/maa', { file: target, patch: { dir: maaDir } }).catch(() => { });
+      // 顺手导入 MAA 里的干员识别结果（不依赖 token；失败不影响引导完成）
+      if (target && maaDir) {
+        if (ok.operbox) {
+          taskLogLine(logBox, '从 MAA 导入干员信息…');
+          try {
+            const r = await api('/api/account/import-maa', { file: target });
+            taskLogLine(logBox, `✓ 已导入 ${r.imported || 0} 名干员${r.skipped ? `（跳过 ${r.skipped} 名）` : ''}，来源 ${r.source === 'yituliu' ? '一图流' : 'MAA 本地识别'}`);
+          } catch (e) {
+            taskLogLine(logBox, '✗ 干员信息导入失败：' + e.message, true);
+          }
+        } else {
+          taskLogLine(logBox, '! 该 MAA 还没有干员识别数据（data/OperBoxData.json），可稍后在 MAA 小工具里识别，再从森空岛页导入', true);
+        }
+      }
+      // 导入会改练度统计：收尾前再拉一次列表，侧栏数字与导入结果一致
+      const acc2 = await api('/api/accounts');
+      S.accounts = acc2.accounts;
       renderAccounts();
       renderMaaState();
       close();
       toast('账号已就绪');
-      const target = (result && result.newest) || (S.accounts[0] && S.accounts[0].file);
-      // 首个账号也记下自己用的 MAA，与后续添加的账号同规则
-      if (target && maaDir) await api('/api/account/maa', { file: target, patch: { dir: maaDir } }).catch(() => { });
       if (target) await selectAccount(target, true);
     } catch (e) {
       toast('同步失败：' + e.message, 'err', 6000);
