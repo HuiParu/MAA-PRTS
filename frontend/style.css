@@ -777,6 +777,15 @@ input:focus, select:focus, button:focus-visible { outline: none; }
   letter-spacing: -1px;
 }
 .basket-item:hover .drag-dots { color: var(--mint); }
+
+/* 账号列表：长按 350ms 进入拖动改序（bindAccountOrder） */
+.acct.dragging {
+  opacity: .5;
+  outline: 1px dashed rgba(94, 234, 212, 0.6);
+  outline-offset: -1px;
+}
+body.acct-reorder,
+body.acct-reorder * { cursor: grabbing !important; user-select: none !important; }
 .basket-idx {
   flex: 0 0 auto;
   min-width: 13px;

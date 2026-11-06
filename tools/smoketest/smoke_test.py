@@ -84,15 +84,16 @@ def _patch_settings(tmp):
     R4/R5 之后 tokens_file() / _migrate_txt_if_any / _migrate_legacy_layout
     读的都是模块级 CONFIG_DIR / LEGACY_SKLAND_DIR，三个全局必须一起指过去，
     否则 fixture 写进 tmp、代码却去读写真实仓库的 config/。
-    （SETTINGS_PATH 在 import 时定型、指真实仓库，与现状一致，不 patch。
-    另注：在仓库根 import core.settings 时，模块级迁移会先对真实仓库执行
-    一次——等价于 App 正常启动迁移，不丢数据，不是测试污染。）
+    SETTINGS_PATH 也一并指过去（B16 要写 settings 验证手动排序，
+    不能在真实仓库留文件），顺手清掉 load() 的内存缓存。
     """
     sys.path.insert(0, os.path.join(REPO, 'backend'))
     from core import settings
     settings.CONFIG_DIR = os.path.join(tmp, 'config')
     settings.ACCOUNTS_DIR = settings.CONFIG_DIR
     settings.LEGACY_SKLAND_DIR = os.path.join(tmp, 'config', 'skland')
+    settings.SETTINGS_PATH = os.path.join(tmp, 'config', 'settings.json')
+    settings._cache = None
     return settings
 
 
@@ -442,6 +443,39 @@ def check_create_from_maa(tmp):
     else:
         raise AssertionError('done=false 的残缺名单不该建号')
     assert not os.path.isfile(os.path.join(tmp, 'config', 'MAA-fake(3).json'))
+
+
+# ---------------------------------------------------------------- B16 账号手动排序
+def check_account_order(tmp):
+    """账号列表排序：settings.accountOrder（长按拖动保存的顺序）优先，
+    没排过的账号按默认序（干员数降序、昵称）跟在后面；幽灵文件名忽略
+    """
+    from core import accounts, settings
+
+    _reset_config(tmp)
+    cfg = os.path.join(tmp, 'config')
+
+    def mk(name, uid, count):
+        with open(os.path.join(cfg, name), 'w', encoding='utf-8') as f:
+            json.dump({'account': {'uid': uid, 'nickName': name[:-5]},
+                       'stats': {'charCount': count}}, f, ensure_ascii=False)
+
+    mk('甲.json', '1', 10)
+    mk('乙.json', '2', 20)
+    mk('丙.json', '3', 5)
+    names = [r['file'] for r in accounts.list_accounts()]
+    assert names == ['乙.json', '甲.json', '丙.json'], names      # 默认：干员数降序
+
+    settings.save({'accountOrder': ['丙.json', '乙.json']})
+    names = [r['file'] for r in accounts.list_accounts()]
+    assert names == ['丙.json', '乙.json', '甲.json'], names      # 手动序在前
+
+    # 排序列表里的幽灵文件名排序时忽略；非 .json 的脏值被清洗掉
+    settings.save({'accountOrder': ['乙.json', 'ghost.json', 42]})
+    names = [r['file'] for r in accounts.list_accounts()]
+    assert names == ['乙.json', '甲.json', '丙.json'], names
+    assert settings.load()['accountOrder'] == ['乙.json', 'ghost.json'], \
+        settings.load()['accountOrder']
 
 
 def _assert_maa_parsable(content):
@@ -855,6 +889,7 @@ def main():
         r.check('B13 旧布局 config/skland 压平迁移', lambda: check_layout_migration(settings_mod, tmp))
         r.check('B14 MAA 干员 JSON 解析与练度映射', lambda: check_operbox_parse(tmp))
         r.check('B15 从 MAA 直接建号（无 token）', lambda: check_create_from_maa(tmp))
+        r.check('B16 账号手动排序（accountOrder）', lambda: check_account_order(tmp))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

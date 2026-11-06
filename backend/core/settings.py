@@ -171,6 +171,7 @@ DEFAULTS = {
     'maaDirs': [],          # 用过的 MAA 根目录历史（添加账号时「已存过」列表的数据源）
     'autoStartMaa': True,
     'lastAccount': '',
+    'accountOrder': [],     # 账号列表手动排序（长按拖动保存的文件名顺序）
 }
 
 _lock = threading.RLock()
@@ -233,6 +234,8 @@ def save(patch: dict) -> dict:
                 continue
             if k == 'maaDir':
                 v = _norm_dir(v)
+            elif k == 'accountOrder':
+                v = [str(x) for x in (v or []) if str(x).endswith('.json')][:200]
             cur[k] = v
         # maaDir 每次保存都并入历史列表（大小写不敏感去重）
         if cur.get('maaDir'):

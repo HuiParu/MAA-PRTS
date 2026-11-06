@@ -64,7 +64,11 @@ def list_accounts():
                 'byRarity': s.get('byRarity') or {},
             },
         })
-    out.sort(key=lambda r: (-(r['stats']['charCount'] or 0), r['nickName']))
+    # 排序：settings.accountOrder（长按拖动保存的手动序）里的按其顺序在前，
+    # 没排过的按默认序（干员数降序、昵称）跟在后面；排序列表里的幽灵文件名忽略
+    order = {f: i for i, f in enumerate(settings.load().get('accountOrder') or [])}
+    out.sort(key=lambda r: (order.get(r['file'], 1 << 30),
+                            -(r['stats']['charCount'] or 0), r['nickName']))
     return out
 
 
