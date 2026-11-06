@@ -301,6 +301,12 @@ def _quit(code=0, reason='退出'):
 
 
 def main():
+    if not os.path.isdir(WEB):
+        print('[错误] 未找到页面目录：%s' % WEB)
+        print('       程序在哪个目录运行就用哪个目录的资源——源码运行请在项目根')
+        print('       目录启动（双击 启动.bat）；打包运行请保持 exe 与 _internal 同级。')
+        return 1
+
     no_window = '--no-window' in sys.argv
     debug = '--debug' in sys.argv
     port = find_port()
@@ -312,11 +318,21 @@ def main():
     accounts.ensure_tokens()
     log('=' * 56)
     log('MAA-PRTS %s  界面 %s' % (version.APP_VERSION, url))
-    log('项目目录  %s' % settings.project_root())
+    log('运行目录  %s' % settings.project_root())
     log('账号数据  %s' % settings.skland_dir())
     log('配置文件  %s' % settings.SETTINGS_PATH)
     log('日志文件  %s' % settings.LOG_PATH)
-    log('MAA 目录  %s' % (st['maaDir'] or '（尚未设置，首次启动会提示）'))
+    # MAA 目录：全局默认可能为空（账号各自绑定时不影响使用），顺带展示上次账号的绑定
+    maa_line = st['maaDir'] or '（未设置全局默认）'
+    if st.get('lastAccount'):
+        try:
+            snap = accounts.get_account(st['lastAccount'])
+            bound = (snap.get('maa') or {}).get('dir') or ''
+            if bound:
+                maa_line = '%s ｜ 上次账号绑定 %s' % (maa_line, bound)
+        except Exception:
+            pass
+    log('MAA 目录  %s' % maa_line)
     log('=' * 56)
     if accounts.TOKENS_WARNING:
         log('[警告] ' + accounts.TOKENS_WARNING)

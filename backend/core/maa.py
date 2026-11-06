@@ -22,30 +22,31 @@ BACKUP_PREFIX = '.bak-app-'
 BACKUP_STAMP = re.compile(r'^\d{8}-\d{6}$')
 
 
-def _dir():
-    return settings.load()['maaDir']
+def _dir(maa_dir=None):
+    """解析本次操作用的 MAA 根目录：账号绑定的目录，没有就回退全局默认"""
+    return maa_dir or settings.load()['maaDir']
 
 
-def _exe():
-    return os.path.join(_dir(), 'MAA.exe')
+def _exe(maa_dir=None):
+    return os.path.join(_dir(maa_dir), 'MAA.exe')
 
 
-def _config_path():
-    return os.path.join(_dir(), 'config', 'gui.new.json')
+def _config_path(maa_dir=None):
+    return os.path.join(_dir(maa_dir), 'config', 'gui.new.json')
 
 
-def _copilot_dir():
-    return os.path.join(_dir(), 'config', 'copilot')
+def _copilot_dir(maa_dir=None):
+    return os.path.join(_dir(maa_dir), 'config', 'copilot')
 
 
-def _prune_backups(keep=KEEP_BACKUPS):
+def _prune_backups(keep=KEEP_BACKUPS, maa_dir=None):
     """清理本程序生成的 .bak-app-<时间戳>，只留最近 keep 份
 
     只认「gui.new.json.bak-app-YYYYMMDD-HHMMSS」这种自己写出来的名字，
     用户或 MAA 自己的 .bak / .bak-auto / .bak-before-xxx 一律不碰。
     返回被删掉的文件名列表。
     """
-    cfg = _config_path()
+    cfg = _config_path(maa_dir)
     folder = os.path.dirname(cfg)
     prefix = os.path.basename(cfg) + BACKUP_PREFIX
     try:
@@ -69,16 +70,16 @@ def _prune_backups(keep=KEEP_BACKUPS):
     return removed
 
 
-def _load_cfg():
-    p = _config_path()
+def _load_cfg(maa_dir=None):
+    p = _config_path(maa_dir)
     if not os.path.isfile(p):
         raise FileNotFoundError('找不到 MAA 配置：%s（设置里检查 MAA 根目录）' % p)
     with io.open(p, encoding='utf-8') as f:
         return json.load(f)
 
 
-def _save_cfg(data):
-    p = _config_path()
+def _save_cfg(data, maa_dir=None):
+    p = _config_path(maa_dir)
     tmp = p + '.tmp'
     with io.open(tmp, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
@@ -96,29 +97,131 @@ def is_running() -> bool:
         return False
 
 
-def status():
-    d = _dir()
-    cfg_ok = os.path.isfile(_config_path())
+def list_running():
+    """列出正在运行的 MAA.exe，从进程反查安装目录（首次引导用）。
+
+    tasklist 只告诉有没有、不给路径，起 PowerShell 又慢，直接
+    Toolhelp32 快照 + QueryFullProcessImageNameW 拿完整路径。
+    同目录多开只留一条，pid 合并展示。
+    """
+    import ctypes
+    import ctypes.wintypes as wintypes
+
+    class PE32W(ctypes.Structure):
+        _fields_ = [
+            ('dwSize', wintypes.DWORD), ('cntUsage', wintypes.DWORD),
+            ('th32ProcessID', wintypes.DWORD),
+            ('th32DefaultHeapID', ctypes.c_size_t),
+            ('th32ModuleID', wintypes.DWORD), ('cntThreads', wintypes.DWORD),
+            ('th32ParentProcessID', wintypes.DWORD),
+            ('pcPriClassBase', wintypes.LONG), ('dwFlags', wintypes.DWORD),
+            ('szExeFile', ctypes.c_wchar * 260),
+        ]
+
+    TH32CS_SNAPPROCESS = 0x2
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    k32 = ctypes.windll.kernel32
+    k32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    k32.Process32FirstW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    k32.Process32NextW.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    k32.OpenProcess.restype = ctypes.c_void_p
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.QueryFullProcessImageNameW.argtypes = [
+        ctypes.c_void_p, wintypes.DWORD, ctypes.c_wchar_p, ctypes.c_void_p]
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    k32.CloseHandle.restype = wintypes.BOOL
+
+    def image_path(pid):
+        """exe 完整路径；权限不够（别的用户的进程）拿不到就返回 None"""
+        h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            return None
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            n = wintypes.DWORD(len(buf))
+            if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n)):
+                return buf.value
+            return None
+        finally:
+            k32.CloseHandle(h)
+
+    found = {}
+    try:
+        snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+        if not snap or snap == ctypes.c_void_p(-1).value:
+            return []
+        try:
+            ent = PE32W()
+            ent.dwSize = ctypes.sizeof(PE32W)
+            ok = k32.Process32FirstW(snap, ctypes.byref(ent))
+            while ok:
+                if ent.szExeFile.lower() == 'maa.exe':
+                    p = image_path(ent.th32ProcessID)
+                    if p:
+                        row = found.setdefault(p.lower(), {'path': p, 'dir': os.path.dirname(p), 'pids': []})
+                        row['pids'].append(ent.th32ProcessID)
+                ok = k32.Process32NextW(snap, ctypes.byref(ent))
+        finally:
+            k32.CloseHandle(snap)
+    except Exception:
+        return []
+    out = sorted(found.values(), key=lambda r: r['dir'])
+    return out
+
+
+def _dir_of(row):
+    return os.path.normcase(os.path.normpath(row['dir']))
+
+
+def running_in(maa_dir):
+    """指定目录的 MAA 进程行（list_running 的行），没在跑返回 None。
+    多开时只认自己目录的，别的 MAA 不关不报。"""
+    want = os.path.normcase(os.path.normpath(maa_dir or _dir()))
+    for r in list_running():
+        if _dir_of(r) == want:
+            return r
+    return None
+
+
+def status(maa_dir=None):
+    d = _dir(maa_dir)
+    cfg_ok = os.path.isfile(_config_path(d))
     profiles, current = [], None
     if cfg_ok:
         try:
-            cfg = _load_cfg()
+            cfg = _load_cfg(d)
             profiles = list((cfg.get('Configurations') or {}).keys())
             current = cfg.get('Current')
         except Exception:
             cfg_ok = False
+    mine = running_in(d)
     return {
         'maaDir': d,
-        'exeExists': os.path.isfile(_exe()),
+        'exeExists': os.path.isfile(_exe(d)),
         'configExists': cfg_ok,
-        'running': is_running(),
+        'running': bool(mine),
+        'runningPids': (mine or {}).get('pids') or [],
         'profiles': profiles,
         'current': current,
-        'profile': settings.load()['profile'],
     }
 
 
-def close():
+def close(maa_dir=None):
+    """关闭 MAA。给了目录就只关那个目录的进程（多开互不影响）；
+    没给就按映像名全关（老语义，兜底用）。"""
+    if maa_dir:
+        mine = running_in(maa_dir)
+        if not mine:
+            return True
+        for pid in mine['pids']:
+            subprocess.run(['taskkill', '/PID', str(pid), '/F'],
+                           capture_output=True, timeout=15, creationflags=CREATE_NO_WINDOW)
+        for _ in range(20):
+            if not running_in(maa_dir):
+                return True
+            time.sleep(0.3)
+        return False
     if is_running():
         subprocess.run(['taskkill', '/IM', 'MAA.exe', '/F'],
                        capture_output=True, timeout=15, creationflags=CREATE_NO_WINDOW)
@@ -129,13 +232,13 @@ def close():
     return not is_running()
 
 
-def launch():
-    exe = _exe()
+def launch(maa_dir=None):
+    exe = _exe(maa_dir)
     if not os.path.isfile(exe):
         raise FileNotFoundError('找不到 MAA.exe：%s' % exe)
-    subprocess.Popen([exe], cwd=_dir(), close_fds=True)
+    subprocess.Popen([exe], cwd=_dir(maa_dir), close_fds=True)
     time.sleep(1.0)
-    return is_running()
+    return bool(running_in(_dir(maa_dir)))
 
 
 # ---------------------------------------------------------------- 写作业
@@ -143,30 +246,38 @@ def _safe(name):
     return SAFE.sub('_', name).strip() or 'stage'
 
 
-def apply_plan(items, profile=None, mode='replace', auto_start=True, tid=None):
+def apply_plan(items, profile=None, mode='replace', auto_start=True, tid=None, maa_dir=None):
     """items: [{copilotId, stageCode, title}] → 写入 MAA 多作业列表"""
     log = tasks.log_factory(tid) if tid else (lambda *_: None)
-    profile = profile or settings.load()['profile']
+    d = _dir(maa_dir)
 
-    log('MAA 目录：%s' % _dir())
-    if is_running():
-        log('检测到 MAA 正在运行，先关闭…')
-        close()
+    log('MAA 目录：%s' % d)
+    want = os.path.normcase(os.path.normpath(d))
+    rows = list_running()
+    mine = next((r for r in rows if _dir_of(r) == want), None)
+    others = [r for r in rows if _dir_of(r) != want]
+    if mine:
+        log('检测到该目录的 MAA 正在运行（PID %s），先关闭…' % ' / '.join(map(str, mine['pids'])))
+        close(d)
         log('MAA 已关闭')
     else:
         log('MAA 未运行')
+    if others:
+        log('其他目录的 MAA 在跑（%d 个），不动它们' % len(others))
 
     time.sleep(0.4)
-    bak = _config_path() + BACKUP_PREFIX + time.strftime('%Y%m%d-%H%M%S')
-    shutil.copyfile(_config_path(), bak)
+    bak = _config_path(d) + BACKUP_PREFIX + time.strftime('%Y%m%d-%H%M%S')
+    shutil.copyfile(_config_path(d), bak)
     log('配置已备份 → %s' % os.path.basename(bak))
-    dropped = _prune_backups()
+    dropped = _prune_backups(maa_dir=d)
     if dropped:
         log('清理旧备份 %d 个（只保留最近 %d 份）' % (len(dropped), KEEP_BACKUPS))
 
-    cfg = _load_cfg()
+    cfg = _load_cfg(d)
     configs = cfg.get('Configurations') or {}
-    if profile not in configs:
+    # 没指定档案就用 MAA 当前启用的那个；一个都没有才报错
+    profile = profile or cfg.get('Current') or ''
+    if not profile or profile not in configs:
         raise ValueError('配置「%s」不存在，可选：%s' % (profile, ', '.join(configs)))
 
     tpl = copy.deepcopy((configs.get('Default') or {}).get('Copilot') or {})
@@ -193,8 +304,8 @@ def apply_plan(items, profile=None, mode='replace', auto_start=True, tid=None):
                 log('    修正：%s' % n)
             flags = copilot.difficulty_flags(content)
             fname = '%s_%s.json' % (_safe(stage_code), cid)
-            os.makedirs(_copilot_dir(), exist_ok=True)
-            fpath = os.path.join(_copilot_dir(), fname)
+            os.makedirs(_copilot_dir(d), exist_ok=True)
+            fpath = os.path.join(_copilot_dir(d), fname)
             with io.open(fpath, 'w', encoding='utf-8') as f:
                 json.dump(content, f, ensure_ascii=False, indent=2)
             cache[cid] = (fname, flags)
@@ -229,14 +340,14 @@ def apply_plan(items, profile=None, mode='replace', auto_start=True, tid=None):
     cfg.setdefault('Configurations', {})[profile] = target
     if 'Current' in cfg:
         cfg['Current'] = profile
-    _save_cfg(cfg)
+    _save_cfg(cfg, maa_dir=d)
     log('已写入配置「%s」，作业列表 %d 条（本次新增 %d）' % (profile, len(task_list), len(new_entries)))
 
     started = False
     if auto_start:
         log('启动 MAA…')
         try:
-            started = launch()
+            started = launch(d)
             log('MAA 已启动' if started else 'MAA 启动后未检测到进程，请手动打开')
         except Exception as e:
             log('启动失败：%s' % e)
@@ -245,13 +356,13 @@ def apply_plan(items, profile=None, mode='replace', auto_start=True, tid=None):
             'added': len(new_entries), 'files': files, 'started': started}
 
 
-def start_apply(items, profile=None, mode='replace', auto_start=True):
+def start_apply(items, profile=None, mode='replace', auto_start=True, maa_dir=None):
     title = '写入 MAA（%d 份作业）' % len(items or [])
     holder = {}
 
     def go():
         try:
-            res = apply_plan(items, profile, mode, auto_start, holder['tid'])
+            res = apply_plan(items, profile, mode, auto_start, holder['tid'], maa_dir=maa_dir)
             tasks.finish(holder['tid'], result=res)
         except Exception as e:
             import traceback
@@ -265,19 +376,19 @@ def start_apply(items, profile=None, mode='replace', auto_start=True):
     return tid
 
 
-def clear_tasklist(profile=None):
-    cfg = _load_cfg()
-    profile = profile or settings.load()['profile']
+def clear_tasklist(profile=None, maa_dir=None):
+    cfg = _load_cfg(maa_dir)
     configs = cfg.get('Configurations') or {}
-    if profile not in configs:
-        raise ValueError('配置不存在：%s' % profile)
+    profile = profile or cfg.get('Current') or ''
+    if not profile or profile not in configs:
+        raise ValueError('配置不存在：%s' % (profile or '（没有可用配置）'))
     configs[profile].setdefault('Copilot', {})['TaskList'] = []
-    _save_cfg(cfg)
+    _save_cfg(cfg, maa_dir=maa_dir)
     return True
 
 
-def tasklist(profile=None):
-    cfg = _load_cfg()
-    profile = profile or cfg.get('Current') or settings.load()['profile']
+def tasklist(profile=None, maa_dir=None):
+    cfg = _load_cfg(maa_dir)
+    profile = profile or cfg.get('Current') or ''
     cop = ((cfg.get('Configurations') or {}).get(profile) or {}).get('Copilot') or {}
     return {'profile': profile, 'items': cop.get('TaskList') or []}

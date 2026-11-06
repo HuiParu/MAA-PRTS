@@ -1,22 +1,19 @@
 # -*- coding: utf-8 -*-
-"""路径与配置：所有数据都落在项目目录内
+"""路径与配置：所有数据都落在运行根目录内
 
 目录约定（源码运行 / 打包运行一致）：
 
-    <项目根>/
+    <运行根>/
       frontend/     页面（只读）
       backend/      服务端代码（只读）
       resources/    内置游戏资源包（只读）
       config/       ★ 用户数据：settings.json、gamedata.json、
                                  skland/（tokens.json 加密、accounts/、缓存）
       debug/        运行日志 app.log（随时可删）
-                                 ——旧版根目录下的 skland/、config/ 里的 app.log
-                                 启动时自动并入/挪走
 
-「项目根」判定：
-  - 源码运行：settings.py 往上三层
-  - 打包运行：从 exe 目录逐级向上找，第一个同时含 frontend/ 与 backend/ 的目录；
-              找不到（例如把 build/MAA-PRTS 单独拷走）就用 exe 所在目录
+「运行根」＝程序在哪个目录运行，数据就落在哪个目录，任何模式都不向上找：
+  - 打包运行：exe 所在目录
+  - 源码运行：启动时的工作目录（启动.bat / 打包.bat 都会先 cd 到仓库根）
 """
 from __future__ import annotations
 
@@ -28,42 +25,17 @@ import threading
 
 FROZEN = bool(getattr(sys, 'frozen', False))
 
-
-def _looks_like_project(path: str) -> bool:
-    return (os.path.isdir(os.path.join(path, 'frontend'))
-            and os.path.isdir(os.path.join(path, 'backend')))
-
-
-def _source_root() -> str:
-    # <root>/backend/core/settings.py → <root>
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 运行根：可写数据（config/、debug/）落在这里
+ROOT = (os.path.dirname(os.path.abspath(sys.executable)) if FROZEN
+        else os.path.abspath(os.getcwd()))
+# 只读资源根：打包后在 PyInstaller 的解包目录里，源码运行与运行根同处
+RES = (getattr(sys, '_MEIPASS', ROOT) if FROZEN else ROOT)
 
 
 def project_root() -> str:
-    """可写的项目根目录（数据落在它下面）"""
-    if not FROZEN:
-        return _source_root()
-    d = os.path.dirname(os.path.abspath(sys.executable))
-    cur = d
-    for _ in range(4):
-        if _looks_like_project(cur):
-            return cur
-        parent = os.path.dirname(cur)
-        if parent == cur:
-            break
-        cur = parent
-    return d
+    """可写的运行根目录（数据落在它下面）"""
+    return ROOT
 
-
-def resource_root() -> str:
-    """只读资源目录：打包后是 PyInstaller 的临时解包目录"""
-    if FROZEN:
-        return getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(sys.executable)))
-    return _source_root()
-
-
-ROOT = project_root()
-RES = resource_root()
 
 STATIC_DIR = os.path.join(RES, 'frontend')
 PACK_PATH = os.path.join(RES, 'resources', 'arknights.json')
@@ -133,7 +105,7 @@ for _d in (SKLAND_DIR, ACCOUNTS_DIR, CONFIG_DIR, DEBUG_DIR):
 
 DEFAULTS = {
     'maaDir': '',
-    'profile': 'moren',
+    'maaDirs': [],          # 用过的 MAA 根目录历史（添加账号时「已存过」列表的数据源）
     'autoStartMaa': True,
     'lastAccount': '',
 }
@@ -161,6 +133,34 @@ def load() -> dict:
         return dict(data)
 
 
+def _norm_dir(v: str) -> str:
+    """容忍从资源管理器粘来的路径：正反斜杠混用、末尾带斜杠、双斜杠"""
+    v = (v or '').strip().strip('"')
+    if not v:
+        return ''
+    v = os.path.normpath(v.replace('/', '\\'))
+    if v.endswith('\\') and len(v) > 3:
+        v = v.rstrip('\\')
+    return v
+
+
+def _merged_dirs(dirs, extra):
+    """历史目录列表并入一个新目录（过滤脏值，大小写不敏感去重）"""
+    out = [d for d in (dirs or []) if isinstance(d, str) and d]
+    if extra and os.path.normcase(extra) not in {os.path.normcase(d) for d in out}:
+        out.append(extra)
+    return out
+
+
+def remember_maa_dir(d: str) -> None:
+    """把一个 MAA 根目录并入 maaDirs 历史（账号绑定与全局保存共用入口）"""
+    d = _norm_dir(d)
+    if not d:
+        return
+    with _lock:
+        save({'maaDirs': _merged_dirs(load().get('maaDirs'), d)})
+
+
 def save(patch: dict) -> dict:
     global _cache
     with _lock:
@@ -169,13 +169,11 @@ def save(patch: dict) -> dict:
             if k not in DEFAULTS:
                 continue
             if k == 'maaDir':
-                # 容忍从资源管理器粘来的路径：正反斜杠混用、末尾带斜杠、双斜杠
-                v = (v or '').strip().strip('"')
-                if v:
-                    v = os.path.normpath(v.replace('/', '\\'))
-                    if v.endswith('\\') and len(v) > 3:
-                        v = v.rstrip('\\')
+                v = _norm_dir(v)
             cur[k] = v
+        # maaDir 每次保存都并入历史列表（大小写不敏感去重）
+        if cur.get('maaDir'):
+            cur['maaDirs'] = _merged_dirs(cur.get('maaDirs'), cur['maaDir'])
         os.makedirs(CONFIG_DIR, exist_ok=True)
         tmp = SETTINGS_PATH + '.tmp'
         with io.open(tmp, 'w', encoding='utf-8') as f:

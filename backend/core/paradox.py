@@ -160,8 +160,9 @@ def stage_jobs(stage: str, limit=8) -> list:
 def pick(stages, snap=None, limit=12) -> dict:
     """批量取「每关最合适的一份作业」，给作业集用
 
-    不校验作业里别的干员练度：悖论关卡是官方固定阵容，玩家自己的干员只是
-    「解锁条件」——练度够不够开打已经在 plan() 里判过了（ready）。
+    不校验作业里别的干员练度：悖论关卡是官方固定阵容（练度系统给定），
+    玩家自己的干员只是「解锁条件」——练度够不够开打已经在 plan() 里
+    对悖论主角判过了（ready）。
     """
     wanted = [s for s in (stages or []) if s]
 

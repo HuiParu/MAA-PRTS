@@ -63,7 +63,11 @@
 
 ## 更新方法
 
-游戏出新干员 / 新关卡后：
+游戏出新干员 / 新关卡后，**双击 `E:\project\MAA-PRTS-版本更新\更新资源数据.bat`** 即可
+（自动找 Python、备份旧包、跑下面的命令并检查条数）。
+完整步骤、检查项和常见问题见 `MAA-PRTS-版本更新\游戏资源包更新.md`。
+
+手动跑：
 
 ```bat
 python resources\make_pack.py --excel "D:\ArknightsGameResource\gamedata\excel"
@@ -74,9 +78,18 @@ python resources\make_pack.py --excel "D:\ArknightsGameResource\gamedata\excel"
 | 参数 | 说明 |
 |---|---|
 | `--out` | 输出路径，默认就是 `resources/arknights.json` |
-| `--subprof` | 分支名种子来源，默认读 `skland/subprof_cache.json` |
+| `--subprof` | 分支名缓存，默认自动找 `config/skland/subprof_cache.json`（旧版 `skland/subprof_cache.json` 兜底） |
 
-跑完会打印各表条数和体积，`counts.chars` 变了说明新干员进来了。
+跑完会打印各表条数和体积，并逐项和旧包对比（`+3` / `持平` / `-2 <- 变少`）。
+条数只该增不减，有变少时退出码为 `2`，多半是资源库没 `git pull`。
+
+`subProfessions`（分支中文名）不是游戏表里的字段，是运行时从森空岛学的。
+生成时会**先继承旧包里已有的条目，再用运行时缓存覆盖**，所以缓存文件不存在也不会
+把已有的 73 条清零。
+
+当前基准（2026-11-05）：`chars 469`（可获取 440）/ `stages 3647` / `skills 1846` /
+`equips 924` / `zones 492` / `activities 325` / `subProfessions 73`，体积 0.52 MB。
+
 把新的 `arknights.json` 提交，下次启动缺卡统计就会用新数据。
 
 **只换资源、不重装程序**：程序优先读项目目录下的 `resources/arknights.json`，
