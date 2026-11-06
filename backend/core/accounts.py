@@ -110,6 +110,7 @@ def account_detail(file: str) -> dict:
 
 def save_account(file: str, snap: dict) -> None:
     """把整份账号快照写回磁盘（原子替换）"""
+    settings.ensure_dirs()
     path = os.path.join(_accounts_dir(), os.path.basename(file))
     tmp = path + '.tmp'
     with io.open(tmp, 'w', encoding='utf-8') as f:
@@ -119,6 +120,7 @@ def save_account(file: str, snap: dict) -> None:
 
 def save_maa_meta(file: str, patch: dict) -> dict:
     """把 MAA 配置名等用户字段写回账号 json"""
+    settings.ensure_dirs()
     path = os.path.join(_accounts_dir(), os.path.basename(file))
     snap = _load(path)
     if not snap:

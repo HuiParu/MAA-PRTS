@@ -151,11 +151,18 @@ try:
 except Exception:
     pass
 
-# 只预建 config（=账号目录）与 debug；config/skland 绝不再建，
-# 否则迁移刚删掉的目录每次启动又回来
-for _d in (ACCOUNTS_DIR, DEBUG_DIR):
+def ensure_dirs():
+    """预建 config（=账号目录）；config/skland 绝不再建，
+    否则迁移刚删掉的目录每次启动又回来。
+
+    debug/ 不在这里建——只有 main 的 log() 写它，首写自建即可，
+    免得纯落盘路径把运行根的 debug/ 也一并建出来。
+    import 时什么都不建——纯导入不该有副作用（冒烟测试 / 工具脚本
+    import 本模块会在运行根留空壳目录），真正写盘的入口
+    （main 启动、账号/设置落盘）自己调用。
+    """
     try:
-        os.makedirs(_d, exist_ok=True)
+        os.makedirs(ACCOUNTS_DIR, exist_ok=True)
     except Exception:
         pass
 

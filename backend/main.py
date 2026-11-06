@@ -313,6 +313,7 @@ def main():
     url = 'http://127.0.0.1:%d/' % port
     time.sleep(0.25)
 
+    settings.ensure_dirs()          # config/ 与 debug/ 在启动时才建（import 不建）
     st = settings.load()
     accounts.ensure_tokens()
     log('=' * 56)
