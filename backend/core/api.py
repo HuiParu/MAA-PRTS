@@ -208,12 +208,21 @@ def api_op(q, _body):
         raise ValueError('缺少作业 id')
     d = copilot.operation_detail(cid)
     content = d['content']
+    # 带上 file 就按该账号的练度数据决定要不要展示技能/模组要求：
+    # MAA 导入的账号没有技能数据，这些维度不参与判定，也不该出现在详情里
+    owned = None
+    file = (q.get('file') or '').strip()
+    if file:
+        try:
+            owned = copilot.build_owned(accounts.get_account(file))
+        except Exception:
+            owned = None
     return {
         'id': int(cid),
         'content': content,
         'maaCode': 'maa://%s' % cid,
         'title': (content.get('doc') or {}).get('title'),
-        'opers': copilot.detail_opers(content),
+        'opers': copilot.detail_opers(content, owned),
         'actions': len(content.get('actions') or []),
         'stageName': content.get('stage_name'),
     }

@@ -337,14 +337,14 @@ def check_operbox_parse(tmp):
     # 映射结果要能直接喂给练度匹配：结构同构、放行/拦截语义正确
     owned = copilot.build_owned({'chars': built['chars'] + built2['chars']})
     o6 = owned[copilot.norm(six[1])]
-    assert set(o6) == {'name', 'rarity', 'elite', 'level',
-                       'mainSkillLevel', 'masteryLevels', 'moduleLevels'}, set(o6)
+    assert set(o6) == {'name', 'rarity', 'elite', 'level', 'mainSkillLevel',
+                       'masteryLevels', 'moduleLevels', 'skillKnown'}, set(o6)
     assert copilot.req_met({'name': six[1], 'skill': 2,
                             'requirements': {'elite': 2, 'level': 60}}, o6), \
         '精二满级的干员该放行 elite/level 要求'
-    assert not copilot.req_met({'name': six[1], 'skill': 2,
-                                'requirements': {'skill_level': 9}}, o6), \
-        'local 数据 masteryLevels 全 0，专精要求必须拦下（数据源上限，不许凑放行）'
+    assert copilot.req_met({'name': six[1], 'skill': 2,
+                            'requirements': {'skill_level': 9}}, o6), \
+        'local 数据没有技能维度，按约定只比等级、专精要求不再拦下（详见 B17）'
     o5 = owned[copilot.norm(five[1])]
     assert o5['masteryLevels'] == [3] and o5['moduleLevels'], '一图流的专精/模组没映射过去'
     assert copilot.req_met({'name': five[1], 'skill': 1,
@@ -476,6 +476,108 @@ def check_account_order(tmp):
     assert names == ['乙.json', '甲.json', '丙.json'], names
     assert settings.load()['accountOrder'] == ['乙.json', 'ghost.json'], \
         settings.load()['accountOrder']
+
+
+# ------------------------------------------------- B17 MAA 导入账号只比等级
+def check_maa_import_level_only():
+    """MAA 干员识别导入的账号没有技能/专精/模组数据。
+
+    用户定的妥协：这类账号只比精英化与等级——
+      v1 老作业：按星级补默认等级，不再要求技能；
+      v2 作业：只认 requirements 里的 elite/level，skill_level 与 module 不判。
+    有技能数据的账号（森空岛同步、一图流来源）行为必须保持不变。
+    """
+    from core import copilot, resources
+
+    table = resources.char_table() or {}
+    by_stars = {}
+    for c in table.values():
+        if isinstance(c, dict) and c.get('name'):
+            by_stars.setdefault(int(c.get('rarity') or 0) + 1, c['name'])
+
+    def snap(name, stars, elite, level, with_skills):
+        c = {'charId': 'x', 'name': name, 'rarity': stars, 'elite': elite,
+             'level': level, 'skillLevel': 7, 'favor': 0, 'skin': None}
+        if with_skills:
+            c['skills'] = [{'id': 's1', 'name': '', 'mastery': 3},
+                           {'id': 's2', 'name': '', 'mastery': 0},
+                           {'id': 's3', 'name': '', 'mastery': 0}]
+            c['modules'] = [{'id': 'uniequip_002_x1', 'name': '', 'level': 3}]
+        else:                                   # MAA 本地识别的形态
+            c['skills'] = []
+            c['modules'] = []
+        return {'chars': [c]}
+
+    six, five = by_stars[6], by_stars[5]
+    maa = copilot.build_owned(snap(six, 6, 2, 60, with_skills=False))
+    o = maa[copilot.norm(six)]
+    assert o['skillKnown'] is False, 'MAA 导入的干员应标 skillKnown=False'
+
+    skl = copilot.build_owned(snap(six, 6, 2, 60, with_skills=True))
+    assert skl[copilot.norm(six)]['skillKnown'] is True, '有技能数据的账号不能放宽'
+
+    # v2 作业：技能/模组要求一律不判（改动前这里全是 False）
+    for req in ({'elite': 2, 'level': 60, 'skill_level': 9},
+                {'elite': 2, 'level': 60, 'skill_level': 7},
+                {'elite': 2, 'level': 60, 'module': 3}):
+        assert copilot.req_met({'name': six, 'skill': 2, 'requirements': req}, o), \
+            'MAA 导入号不该被技能/模组要求拦下：%r' % req
+    # 但等级照旧要卡
+    assert not copilot.req_met({'name': six, 'skill': 2,
+                                'requirements': {'elite': 2, 'level': 61}}, o), \
+        '等级不够必须拦下'
+    low = copilot.build_owned(snap(six, 6, 1, 60, with_skills=False))
+    assert not copilot.req_met({'name': six, 'skill': 2,
+                                'requirements': {'elite': 2, 'level': 60}},
+                               low[copilot.norm(six)]), \
+        '精英阶段不够必须拦下（精一 60 不满足精二 60）'
+
+    # v1 作业：按星级补等级默认，且不带技能要求
+    for stars, want in ((6, (2, 60)), (5, (1, 60)), (4, (1, 60)),
+                        (3, (1, 55)), (2, (0, 30)), (1, (0, 30))):
+        name = by_stars[stars]
+        req = copilot.effective_req({'name': name, 'skill': 1}, stars, strict_skill=False)
+        assert (req['elite'], req['level']) == want, \
+            '%d 星默认等级应为 %r，实际 %r' % (stars, want, (req['elite'], req['level']))
+        assert 'skill_level' not in req and 'module' not in req, \
+            '没有技能数据时不该再要求技能/模组：%r' % req
+        assert req.get('implied') is True, '默认要求仍要带 implied 标记'
+
+    maa_five = copilot.build_owned(snap(five, 5, 1, 60, with_skills=False))
+    assert copilot.req_met({'name': five, 'skill': 1}, maa_five[copilot.norm(five)]), \
+        '五星精一 60 该满足 v1 默认'
+    maa_low = copilot.build_owned(snap(five, 5, 0, 55, with_skills=False))
+    assert not copilot.req_met({'name': five, 'skill': 1}, maa_low[copilot.norm(five)]), \
+        '五星精零 55 不该满足 v1 默认（精一 60）'
+
+    # 有技能数据的账号：行为保持原样（专精 0 该被专三要求拦下）
+    assert not copilot.req_met({'name': six, 'skill': 2,
+                                'requirements': {'skill_level': 9}},
+                               skl[copilot.norm(six)]), \
+        '有技能数据的账号不能被顺手放宽'
+    assert copilot.effective_req({'name': six, 'skill': 1}, 6)['skill_level'] == 9, \
+        'v1 默认对正常账号仍要含专三'
+
+    # 详情副本：带账号时展示与判定一致，不带账号时保持原样
+    content = {'opers': [{'name': six, 'skill': 2,
+                          'requirements': {'elite': 2, 'level': 60,
+                                           'skill_level': 9, 'module': 3}}]}
+    dop = copilot.detail_opers(content, maa)
+    assert 'skill_level' not in dop[0]['requirements'], dop[0]['requirements']
+    assert 'module' not in dop[0]['requirements'], dop[0]['requirements']
+    assert dop[0]['skillKnown'] is False
+    assert copilot.detail_opers(content, skl)[0]['requirements']['skill_level'] == 9
+    assert copilot.detail_opers(content)[0]['requirements']['skill_level'] == 9, \
+        '不带账号上下文时不该改变展示'
+    v1 = {'opers': [{'name': six, 'skill': 1}]}      # v1 条目：本来没有 requirements
+    copilot.detail_opers(v1, maa)
+    assert 'requirements' not in v1['opers'][0], '展示副本不能污染原始 content'
+
+    # 搜索用的 detail 也要如实反映（前端据此显示「只比等级」提示）
+    mode, missing, training, _total, detail, _six = copilot.match_operation(content, maa)
+    assert mode == 'ready' and not training, (mode, training)
+    assert detail[0]['skillKnown'] is False
+    assert 'skill_level' not in detail[0]['req'], detail[0]['req']
 
 
 def _assert_maa_parsable(content):
@@ -858,6 +960,56 @@ def check_boot_smoke():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ------------------------------------------------- B18 剧情关不进搜索
+def check_story_stage_filter():
+    """剧情关（stage_table 里 isStoryOnly）只有剧情没有战斗，作业站永远不会有作业。
+
+    以前它们会混进活动展开，每个活动都顶着几行「共 0 份 / 打不了」。
+    现在：新资源包靠 stage['story'] 标记；旧包没有这个字段时靠代号/id 兜底，
+    两条路径都不能让剧情关出现在搜索结果里，也不能误伤真实战斗关。
+    """
+    from core import resources
+
+    # 1. 兜底规则本身：三种形态都要认出来，且不影响普通关卡
+    cases = [
+        ({'id': 'act13side_st01', 'code': 'NL-ST-1'}, True),   # 活动剧情关
+        ({'id': 'a003_st01', 'code': 'OF-ST1'}, True),         # 代号无第二个连字符
+        ({'id': 'st_08-01', 'code': '10-1'}, True),            # 主线纯剧情节点
+        ({'id': 'spst_08-01', 'code': 'EG-3'}, True),          # 主线剧情片段
+        ({'id': 'act13side_10', 'code': 'NL-10'}, False),      # 活动战斗关
+        ({'id': 'main_08-01', 'code': '8-1'}, False),          # 主线战斗关
+        ({'id': 'act13side_tr01', 'code': 'NL-TR-1'}, False),  # 教学关不是剧情关
+    ]
+    for st, want in cases:
+        got = resources._is_story(dict(st))
+        assert got is want, '%r 的剧情判定应为 %s，实际 %s' % (st, want, got)
+
+    # 2. 新包以官方字段为准，不再看代号（标了 story=false 就不该被兜底误杀）
+    assert resources._is_story({'id': 'act13side_st01', 'code': 'NL-ST-1',
+                                'story': False}) is False
+
+    # 3. 实际关卡表里剧情关已经没了
+    codes = [s['code'] for s in resources._stages()]
+    assert codes, '资源包没加载到关卡'
+    left = [c for c in codes if resources._is_story({'id': '', 'code': c})]
+    assert not left, '_stages() 里还有剧情关：%s' % left[:5]
+
+    # 4. 搜剧情关代号拿不到结果；战斗关照常能搜到
+    for kw in ('NL-ST-1', 'EG-3'):
+        r = resources.resolve(kw)
+        assert not r['stages'], '搜 %s 不该有结果，实际 %d 关' % (kw, len(r['stages']))
+    r = resources.resolve('NL-10')
+    assert r['mode'] == 'stage' and len(r['stages']) == 1, \
+        'NL-10 是战斗关，必须还能搜到：%r' % r['mode']
+
+    # 5. 活动展开不带剧情关，但战斗关一个不能少
+    r = resources.resolve('act13side')
+    assert r['mode'] == 'activity' and r['stages'], 'act13side 应展开成活动'
+    assert not [s for s in r['stages'] if s['code'].startswith('NL-ST')], \
+        '活动展开里还有 NL-ST：%s' % [s['code'] for s in r['stages']][:6]
+    assert any(s['code'] == 'NL-EX-7' for s in r['stages']), '战斗关被误删了'
+
+
 # ---------------------------------------------------------------- 入口
 def main():
     try:
@@ -890,6 +1042,8 @@ def main():
         r.check('B14 MAA 干员 JSON 解析与练度映射', lambda: check_operbox_parse(tmp))
         r.check('B15 从 MAA 直接建号（无 token）', lambda: check_create_from_maa(tmp))
         r.check('B16 账号手动排序（accountOrder）', lambda: check_account_order(tmp))
+        r.check('B17 MAA 导入账号只比等级', check_maa_import_level_only)
+        r.check('B18 剧情关不进搜索', check_story_stage_filter)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

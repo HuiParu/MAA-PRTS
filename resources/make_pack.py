@@ -81,6 +81,10 @@ def build(excel_dir, subprof_path=None, base_path=None):
             'code': code,
             'name': st.get('name') or '',
             'zone': st.get('zoneId') or '',
+            # 剧情关（NL-ST-1 这类）：进不了战斗，作业站永远不会有作业。
+            # 带上官方标记，程序侧据此把它们从搜索/活动展开里剔掉，
+            # 免得每个活动都顶着几行「共 0 份 / 打不了」。
+            'story': bool(st.get('isStoryOnly')),
         })
     stages.sort(key=lambda r: r['id'])
 
@@ -128,9 +132,12 @@ def build(excel_dir, subprof_path=None, base_path=None):
     }
     now = dt.datetime.now().astimezone()
     version = now.strftime('%Y.%m.%d')
-    # 内容指纹：同一天重复生成也能区分（程序侧靠它判断资源有没有变）
+    # 内容指纹：同一天重复生成也能区分（程序侧靠它判断资源有没有变）。
+    # 除了关卡 id，还要带上「剧情关条数」——story 字段是后加的，
+    # 只算 id 的话改了这个字段指纹不动，用户侧就收不到资源变更提示。
+    story_count = sum(1 for s in stages if s.get('story'))
     fingerprint = hashlib.sha1(
-        json.dumps([version, counts, [s['id'] for s in stages]],
+        json.dumps([version, counts, story_count, [s['id'] for s in stages]],
                    sort_keys=True).encode('utf-8')
     ).hexdigest()[:8]
 
