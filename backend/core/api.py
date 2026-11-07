@@ -7,7 +7,8 @@ import os
 import traceback
 import urllib.parse
 
-from . import accounts, copilot, maa, operbox, paradox, resources, settings, sklogin, tasks, version
+from . import (accounts, copilot, maa, operbox, packsync, paradox, resources,
+               settings, sklogin, tasks, version)
 
 WEB = settings.static_dir()
 
@@ -47,7 +48,7 @@ def bootstrap(_q, _body):
     acts = resources.activity_list(18)
     sv = _settings_view(st, accs)
     return {
-        'settings': {k: sv[k] for k in ('maaDir', 'maaDirs', 'autoStartMaa')},
+        'settings': {k: sv[k] for k in ('maaDir', 'maaDirs', 'autoStartMaa', 'autoUpdatePack')},
         'accounts': accs,
         'lastAccount': last,
         'maa': status,
@@ -200,6 +201,20 @@ def api_gamedata(_q, _body):
 def api_gamedata_ack(_q, _body):
     """用户点「知道了」之后清掉更新提示"""
     return version.ack(resources.activity_list(18))
+
+
+def api_pack_status(q, _body):
+    """资源包有没有新版本（只查不下载；force=1 时给更长的超时）"""
+    force = str((q or {}).get('force') or '').lower() in ('1', 'true', 'yes')
+    return packsync.status(timeout=8 if force else 4)
+
+
+def api_pack_update(_q, _body):
+    """下载并安装新的资源包（换完立即重算「新活动」提示）"""
+    r = packsync.apply()
+    acts = resources.activity_list(18)
+    return {'result': r, 'pack': resources.pack_info(),
+            'gamedata': version.check(acts)}
 
 
 def api_op(q, _body):
@@ -396,6 +411,8 @@ ROUTES = {
     '/api/activities': api_activities,
     '/api/gamedata': api_gamedata,
     '/api/gamedata/ack': api_gamedata_ack,
+    '/api/pack/status': api_pack_status,
+    '/api/pack/update': api_pack_update,
     '/api/op': api_op,
     '/api/maa/status': api_maa_status,
     '/api/maa/running': api_maa_running,

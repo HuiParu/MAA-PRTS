@@ -29,6 +29,7 @@ config/
   "maaDir": "D:\\2.game\\MAA-ALL\\MAA-ARK\\MAA-v6.20.1-win-x64",
   "maaDirs": ["D:\\2.game\\MAA-ALL\\MAA-ARK\\MAA-v6.20.1-win-x64"],
   "autoStartMaa": true,
+  "autoUpdatePack": true,
   "lastAccount": "小卡拉帕鲁灰#6408 官服.json"
 }
 ```
@@ -38,6 +39,7 @@ config/
 | `maaDir` | 全局默认 MAA 根目录（含 `MAA.exe` 与 `config/gui.new.json`）。写入路径时会自动规范化斜杠 |
 | `maaDirs` | 用过的 MAA 根目录历史（添加账号时「已存过」列表的数据源） |
 | `autoStartMaa` | 写完作业后是否自动启动 MAA |
+| `autoUpdatePack` | 启动后是否自动下载新的游戏资源包（新关卡 / 新干员 / 新活动），默认开。关掉不影响使用，只是要等发新版才有新数据 |
 | `lastAccount` | 上次选中的账号文件，下次启动直接恢复 |
 
 这个文件可以直接手改；改完要重启程序生效（程序启动时读一次并缓存）。

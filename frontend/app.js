@@ -119,6 +119,8 @@ async function boot() {
     fillBasketProfiles();
     if (S.current) await selectAccount(S.current, true);
     startPing();
+    // 资源包后台自动更新：晚几秒，别和首屏渲染抢网络
+    setTimeout(packAutoSync, 2500);
 
     // 首次使用：先让用户填 token 与 MAA 目录，再进主流程
     // （needsMaa 按上次账号绑定的 MAA 判断——账号各自配了 MAA 就不再拦）
@@ -460,6 +462,49 @@ function renderUpdate() {
       toast('操作失败：' + e.message, 'err');
     }
   });
+}
+
+/* ------------------------------------------------------------ 资源包自动更新 */
+/* 服务器每次同步完会把新包提交到仓库，这里启动几秒后悄悄比对一次：
+   有新包就下下来直接换上（0.6 MB，很快），失败一律静默——没网也要能正常用旧包。 */
+async function packAutoSync() {
+  if (S.settings && S.settings.autoUpdatePack === false) return;
+  try {
+    const st = await api('/api/pack/status');
+    S.packsync = st;
+    if (!st || !st.ok || !(st.available || []).length) return;
+    const r = await api('/api/pack/update', {});
+    if (!r.result || !(r.result.applied || []).length) return;
+    S.pack = r.pack || S.pack;
+    S.gamedata = r.gamedata || S.gamedata;
+    renderUpdate();
+    renderQuick();
+    const v = (r.result.applied.find(a => a.pack === 'arknights') || {}).version || '';
+    toast(v ? `游戏资源已更新到 ${v}` : '游戏资源已更新', 'ok', 5000);
+  } catch (e) { /* 静默：检查更新不该打扰用户 */ }
+}
+
+/* 设置页「检查更新」：强制查一次，有就装，返回结果文案 */
+async function packCheckNow() {
+  const st = await api('/api/pack/status?force=1');
+  S.packsync = st;
+  if (!st.ok) return { text: '检查失败：' + (st.error || '网络不可用'), ok: false };
+  if (!(st.available || []).length) {
+    const cur = ((st.current || {}).arknights || {});
+    return { text: `已是最新（${cur.version || '?'}）`, ok: true };
+  }
+  const r = await api('/api/pack/update', {});
+  S.pack = r.pack || S.pack;
+  S.gamedata = r.gamedata || S.gamedata;
+  renderUpdate();
+  renderQuick();
+  const applied = (r.result && r.result.applied) || [];
+  const skipped = (r.result && r.result.skipped) || [];
+  if (!applied.length) {
+    return { text: '下载失败：' + (skipped.map(s => s.reason).join('；') || (r.result || {}).error || '未知原因'), ok: false };
+  }
+  const v = (applied.find(a => a.pack === 'arknights') || {}).version || '';
+  return { text: `已更新${v ? '到 ' + v : ''}`, ok: true };
 }
 
 /* ------------------------------------------------------------ 快捷入口 */
@@ -1817,11 +1862,16 @@ function openSettings() {
       <input type="checkbox" id="set-autostart" ${s.autoStartMaa ? 'checked' : ''}>
       <span>写完作业后自动启动 MAA</span>
     </label>
+    <label class="check-row" style="margin-bottom:14px">
+      <input type="checkbox" id="set-autopack" ${s.autoUpdatePack === false ? '' : 'checked'}>
+      <span>启动后自动更新游戏资源（新关卡 / 新干员 / 新活动）</span>
+    </label>
 
     <div class="path-list">
       <div class="path-item"><span>账号数据</span><code>${esc(p.accounts || '')}</code>${openBtn('accounts', '打开')}</div>
       <div class="path-item"><span>配置与日志</span><code>${esc(p.config || '')}</code>${openBtn('config', '打开')}</div>
-      <div class="path-item"><span>游戏资源</span><code>v${esc(gd.version || pk.version || '?')} · ${counts.chars || 0} 干员 · ${counts.stages || 0} 关卡</code></div>
+      <div class="path-item"><span>游戏资源</span><code id="set-pack-msg">v${esc(gd.version || pk.version || '?')} · ${counts.chars || 0} 干员 · ${counts.stages || 0} 关卡</code>
+        <button class="btn-plain mini" id="set-pack-check">检查更新</button></div>
       <div class="path-item"><span>程序版本</span><code>MAA-PRTS ${esc(gd.app || (S.appInfo && S.appInfo.version) || '')}</code></div>
     </div>
 
@@ -1857,11 +1907,28 @@ function openSettings() {
           box.textContent = '检测失败：' + e.message;
         }
       });
+      $('#set-pack-check', el).addEventListener('click', async () => {
+        const btn = $('#set-pack-check', el);
+        const msg = $('#set-pack-msg', el);
+        btn.disabled = true;
+        msg.textContent = '检查中…';
+        try {
+          const r = await packCheckNow();
+          msg.textContent = r.text;
+          toast(r.text, r.ok ? 'ok' : 'err', 4000);
+        } catch (e) {
+          msg.textContent = '检查失败';
+          toast('检查失败：' + e.message, 'err');
+        } finally {
+          btn.disabled = false;
+        }
+      });
       $('#btn-save-set', el).addEventListener('click', async () => {
         try {
           const d = await api('/api/settings', {
             maaDir: $('#set-maa', el).value.trim(),
             autoStartMaa: $('#set-autostart', el).checked,
+            autoUpdatePack: $('#set-autopack', el).checked,
           });
           S.settings = d.settings;
           S.maa = d.maa;

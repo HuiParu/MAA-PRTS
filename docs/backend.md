@@ -24,6 +24,7 @@
 | `core/copilot.py` | 作业站接口 + 干员要求匹配算法 |
 | `core/resources.py` | 读 `resources/arknights.json`：关卡索引、干员表、技能/模组名、活动正式名与代号前缀 |
 | `core/version.py` | 版本管理：程序版本、内置资源包版本、资源更新检测与提示 |
+| `core/packsync.py` | 资源包自动更新：读远端 manifest → 校验 sha256/条数 → 原子替换 |
 | `core/maa.py` | MAA 进程控制、`gui.new.json` 读写、作业文件下载 |
 | `core/tasks.py` | 内存任务表：状态、日志、结果，供前端轮询 |
 
@@ -74,6 +75,8 @@ main()
 | GET | `/api/activities` | 近期活动列表（快捷栏数据源） |
 | GET | `/api/gamedata` | 资源包版本状态（含 `pending` 更新提示） |
 | POST | `/api/gamedata/ack` | 清掉待提示的资源更新 |
+| GET | `/api/pack/status` | 远端有没有新的资源包（只读；`?force=1` 给更长超时） |
+| POST | `/api/pack/update` | 下载并安装新资源包，返回新的 `pack` 与 `gamedata` |
 | GET | `/api/op?id=` | 作业详情（干员与要求、动作数、`maa://` 代码） |
 | GET | `/api/maa/status` | MAA 是否运行、配置列表、当前配置 |
 | GET | `/api/maa/probe?dir=` | 检测目录是不是 MAA 根目录（引导/设置用）；附干员识别数据 `operbox/operboxCount/operboxSyncTime` |
@@ -107,9 +110,10 @@ pywebview 窗口与浏览器直开都是同源，不受影响。
 | 程序版本 `APP_VERSION` | 代码里写死 | 日志、设置页、请求头 `Server` |
 | 资源版本 | `resources/arknights.json` 的 `version` + `fingerprint` | 判断游戏数据有没有变 |
 
-资源包由 `make_pack.py` 生成时会写入 `version`（生成日期，如 `2026.11.05`）和
-`fingerprint`（内容指纹，同一天多次生成也能区分）。`version.check()` 把它和
-`config/gamedata.json` 里记的「上次见到的版本」比对：
+资源包由 `make_pack.py` 生成时会写入 `version`（**游戏版本日期**，如 `2026.10.29`，
+取自上游 `version` 文件）和 `fingerprint`（纯内容哈希：生成日期和本机学到的分支名都不参与，
+同一份数据在哪台机器上生成都一样）。`version.check()` 把它和 `config/gamedata.json`
+里记的「上次见到的版本」比对：
 
 | 情况 | 行为 |
 |---|---|
@@ -123,6 +127,25 @@ pywebview 窗口与浏览器直开都是同源，不受影响。
 资源包装载顺序是「项目目录 `resources/arknights.json` → 程序内置那份」，
 所以想更新游戏数据，把新的 `arknights.json` 覆盖到项目 `resources/` 里就行，
 不用重新打包；下次启动就会看到更新提示，新活动也会排到快捷栏最前面。
+
+### 资源包自动更新（`packsync.py`）
+
+启动约 2.5 秒后前端调 `/api/pack/status`：读仓库里的 `resources/pack-manifest.json`，
+拿 `fingerprint` 和本地那份比；不一样就 `/api/pack/update` 下载、校验、替换。
+**检查失败一律静默**——没网也要能正常用旧包。
+
+| 环节 | 规则 |
+|---|---|
+| 清单源 | `raw.githubusercontent` → `gh-proxy` → `jsDelivr`，逐个回退 |
+| 校验 | 字节数 + `sha256` 必须和 manifest 一致；不是合法 json、缺 `chars/stages` 直接拒 |
+| 防退化 | 各表条数不得比本地少（半截包会把数据清零）；悖论条数同理 |
+| 落盘 | 写 `<运行根>/resources/*.json`，旧文件留 `.bak`，`os.replace` 原子替换 |
+| 生效 | `arknights.json` → `resources.clear_cache()`；`paradox.json` 本就按 mtime 重读 |
+| 源码模式 | 默认不覆盖（免得弄脏工作区），`MAA_PRTS_PACK_FORCE=1` 可强制 |
+
+上游那半边在 GitHub Actions（`.github/workflows/pack.yml`，每天北京时间 12:00 / 16:00）：
+取上游 commit sha → 和包里的 `sourceCommit` 比 → 变了才按 sha 下载 9 个 json →
+重新生成 → 条数校验 → 直接提交 main（数据不是代码，不走 PR）。
 
 ## 匹配算法（`copilot.py`）
 
