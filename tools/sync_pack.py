@@ -298,6 +298,7 @@ def main(argv=None):
         if not cleanup:
             os.makedirs(work, exist_ok=True)
 
+    outdir = ''
     try:
         if src_dir:
             log('')
@@ -308,6 +309,9 @@ def main(argv=None):
             download_all(sha, work, args.repo)
         excel = os.path.join(work, 'gamedata', 'excel')
 
+        # 中间产物单独放临时目录：--from-dir 时 work 是用户的克隆，绝不能往里写
+        outdir = tempfile.mkdtemp(prefix='maaprts-out-')
+
         make_pack = _load_module('make_pack', os.path.join(root, 'resources', 'make_pack.py'))
         paradox_build = _load_module('build_paradox_data',
                                      os.path.join(root, 'tools', 'build_paradox_data.py'))
@@ -317,7 +321,7 @@ def main(argv=None):
 
         log('')
         log('生成 arknights.json')
-        tmp_pack = os.path.join(work, 'arknights.json')
+        tmp_pack = os.path.join(outdir, 'arknights.json')
         base = tmp_pack if os.path.isfile(pack_path) else None
         if base:
             shutil.copyfile(pack_path, tmp_pack)   # 只为继承旧包里的分支中文名
@@ -372,6 +376,8 @@ def main(argv=None):
         log('[错误] %s' % e)
         return 1
     finally:
+        if outdir:
+            shutil.rmtree(outdir, ignore_errors=True)
         if cleanup:
             shutil.rmtree(work, ignore_errors=True)
 
