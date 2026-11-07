@@ -25,6 +25,7 @@
 | `core/resources.py` | 读 `resources/arknights.json`：关卡索引、干员表、技能/模组名、活动正式名与代号前缀 |
 | `core/version.py` | 版本管理：程序版本、内置资源包版本、资源更新检测与提示 |
 | `core/packsync.py` | 资源包自动更新：读远端 manifest → 校验 sha256/条数 → 原子替换 |
+| `core/appupdate.py` | 程序本体自动更新（GitHub Releases）：查版本 → 下载校验 → 退出后由 install.cmd 替换 |
 | `core/maa.py` | MAA 进程控制、`gui.new.json` 读写、作业文件下载 |
 | `core/tasks.py` | 内存任务表：状态、日志、结果，供前端轮询 |
 
@@ -77,6 +78,10 @@ main()
 | POST | `/api/gamedata/ack` | 清掉待提示的资源更新 |
 | GET | `/api/pack/status` | 远端有没有新的资源包（只读；`?force=1` 给更长超时） |
 | POST | `/api/pack/update` | 下载并安装新资源包，返回新的 `pack` 与 `gamedata` |
+| GET | `/api/app/status` | 程序本体有没有新版本（只读；`?force=1` 跳过 6 小时节流） |
+| POST | `/api/app/download` | 下载安装包并校验，**不替换**，等用户点「重启并安装」 |
+| POST | `/api/app/install` | 解压 + 拉起 install.cmd + 退出程序（源码模式直接拒绝） |
+| POST | `/api/app/open` | 用系统浏览器打开 Release 页 |
 | GET | `/api/op?id=` | 作业详情（干员与要求、动作数、`maa://` 代码） |
 | GET | `/api/maa/status` | MAA 是否运行、配置列表、当前配置 |
 | GET | `/api/maa/probe?dir=` | 检测目录是不是 MAA 根目录（引导/设置用）；附干员识别数据 `operbox/operboxCount/operboxSyncTime` |
@@ -146,6 +151,26 @@ pywebview 窗口与浏览器直开都是同源，不受影响。
 上游那半边在 GitHub Actions（`.github/workflows/pack.yml`，每天北京时间 12:00 / 16:00）：
 取上游 commit sha → 和包里的 `sourceCommit` 比 → 变了才按 sha 下载 9 个 json →
 重新生成 → 条数校验 → 直接提交 main（数据不是代码，不走 PR）。
+
+### 程序本体自动更新（`appupdate.py`）
+
+和资源包是两条完全独立的链路：资源包 0.6 MB、静默换掉；程序 13 MB、
+**必须用户自己点重启**。启动 4 秒后查一次，成功检查后 6 小时内不再自动查。
+
+| 环节 | 规则 |
+|---|---|
+| 查版本 | `HEAD github.com/.../releases/latest` 读 302 的 `Location` 拿 tag，**不消耗 API 配额** |
+| 拿详情 | 版本确实更新了才请求 `api.github.com/.../releases/latest`（changelog + `assets[].digest`） |
+| 降级 | API 不可用时仍提示版本号，但只给「前往下载页」，不给安装按钮（拿不到校验值） |
+| 版本比较 | 按数字比（`2.10 > 2.9`）；预发布 `-beta.N` 永远小于同号正式；解析失败一律不触发 |
+| 下载 | `github.com` 直链 → `gh-proxy` → `ghfast`，校验字节数 + sha256 + zip 内含 `MAA-PRTS.exe` |
+| 解压 | 拒绝绝对路径与 `..`（zip-slip），落到 `<运行根>/update/stage/` |
+| 替换 | 程序退出后由 `update/install.cmd` 执行：等进程消失 → 备份 exe → `robocopy /MIR` 只镜像 `_internal` → 覆盖 exe → 重启 |
+| 不动的东西 | `config/`、`debug/`、`resources/`——那是用户数据，脚本里一个字都不出现 |
+| 结算 | 写 `update/pending.json`；新版本启动时版本号对上才算成功，否则日志留警告 |
+
+`install()` 需要让整个进程退出，而 api 层不能 import main，所以 main 启动时
+把退出函数注册进 `appupdate.set_quit_hook()`。源码模式一律拒绝自动替换。
 
 ## 匹配算法（`copilot.py`）
 
