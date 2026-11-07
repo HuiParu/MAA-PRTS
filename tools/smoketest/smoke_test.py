@@ -960,6 +960,56 @@ def check_boot_smoke():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ------------------------------------------------- B18 剧情关不进搜索
+def check_story_stage_filter():
+    """剧情关（stage_table 里 isStoryOnly）只有剧情没有战斗，作业站永远不会有作业。
+
+    以前它们会混进活动展开，每个活动都顶着几行「共 0 份 / 打不了」。
+    现在：新资源包靠 stage['story'] 标记；旧包没有这个字段时靠代号/id 兜底，
+    两条路径都不能让剧情关出现在搜索结果里，也不能误伤真实战斗关。
+    """
+    from core import resources
+
+    # 1. 兜底规则本身：三种形态都要认出来，且不影响普通关卡
+    cases = [
+        ({'id': 'act13side_st01', 'code': 'NL-ST-1'}, True),   # 活动剧情关
+        ({'id': 'a003_st01', 'code': 'OF-ST1'}, True),         # 代号无第二个连字符
+        ({'id': 'st_08-01', 'code': '10-1'}, True),            # 主线纯剧情节点
+        ({'id': 'spst_08-01', 'code': 'EG-3'}, True),          # 主线剧情片段
+        ({'id': 'act13side_10', 'code': 'NL-10'}, False),      # 活动战斗关
+        ({'id': 'main_08-01', 'code': '8-1'}, False),          # 主线战斗关
+        ({'id': 'act13side_tr01', 'code': 'NL-TR-1'}, False),  # 教学关不是剧情关
+    ]
+    for st, want in cases:
+        got = resources._is_story(dict(st))
+        assert got is want, '%r 的剧情判定应为 %s，实际 %s' % (st, want, got)
+
+    # 2. 新包以官方字段为准，不再看代号（标了 story=false 就不该被兜底误杀）
+    assert resources._is_story({'id': 'act13side_st01', 'code': 'NL-ST-1',
+                                'story': False}) is False
+
+    # 3. 实际关卡表里剧情关已经没了
+    codes = [s['code'] for s in resources._stages()]
+    assert codes, '资源包没加载到关卡'
+    left = [c for c in codes if resources._is_story({'id': '', 'code': c})]
+    assert not left, '_stages() 里还有剧情关：%s' % left[:5]
+
+    # 4. 搜剧情关代号拿不到结果；战斗关照常能搜到
+    for kw in ('NL-ST-1', 'EG-3'):
+        r = resources.resolve(kw)
+        assert not r['stages'], '搜 %s 不该有结果，实际 %d 关' % (kw, len(r['stages']))
+    r = resources.resolve('NL-10')
+    assert r['mode'] == 'stage' and len(r['stages']) == 1, \
+        'NL-10 是战斗关，必须还能搜到：%r' % r['mode']
+
+    # 5. 活动展开不带剧情关，但战斗关一个不能少
+    r = resources.resolve('act13side')
+    assert r['mode'] == 'activity' and r['stages'], 'act13side 应展开成活动'
+    assert not [s for s in r['stages'] if s['code'].startswith('NL-ST')], \
+        '活动展开里还有 NL-ST：%s' % [s['code'] for s in r['stages']][:6]
+    assert any(s['code'] == 'NL-EX-7' for s in r['stages']), '战斗关被误删了'
+
+
 # ---------------------------------------------------------------- 入口
 def main():
     try:
@@ -993,6 +1043,7 @@ def main():
         r.check('B15 从 MAA 直接建号（无 token）', lambda: check_create_from_maa(tmp))
         r.check('B16 账号手动排序（accountOrder）', lambda: check_account_order(tmp))
         r.check('B17 MAA 导入账号只比等级', check_maa_import_level_only)
+        r.check('B18 剧情关不进搜索', check_story_stage_filter)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
